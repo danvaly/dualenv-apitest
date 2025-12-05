@@ -30,6 +30,7 @@
   "dependencies": {
     "cors-anywhere": "^0.4.4",
     "diff": "^8.0.2",
+    "electron-updater": "^6.6.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-syntax-highlighter": "^16.1.0"
@@ -70,6 +71,11 @@
       "dist/**/*",
       "electron/**/*"
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "danvaly",
+      "repo": "dualenv-test"
+    },
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
@@ -133,7 +139,9 @@
       "icon": "build/icons",
       "category": "Development",
       "maintainer": "Dual API Tester",
-      "mimeTypes": ["x-scheme-handler/dual-env-tester"],
+      "mimeTypes": [
+        "x-scheme-handler/dual-env-tester"
+      ],
       "target": [
         {
           "target": "AppImage",

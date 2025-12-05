@@ -16,6 +16,9 @@ interface RequestBuilderProps {
 const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSend, loading, onShowCurl, isSingleMode, singleEnvIndex }) => {
   const [headerKey, setHeaderKey] = useState('');
   const [headerValue, setHeaderValue] = useState('');
+  const [editingHeaderKey, setEditingHeaderKey] = useState<string | null>(null);
+  const [editingHeaderNewKey, setEditingHeaderNewKey] = useState('');
+  const [editingHeaderNewValue, setEditingHeaderNewValue] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -41,6 +44,46 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
       ...request,
       headers: newHeaders,
     });
+  };
+
+  const startEditingHeader = (key: string, value: string) => {
+    setEditingHeaderKey(key);
+    setEditingHeaderNewKey(key);
+    setEditingHeaderNewValue(value);
+  };
+
+  const saveEditingHeader = () => {
+    if (!editingHeaderKey || !request.headers) return;
+    if (!editingHeaderNewKey.trim()) {
+      setEditingHeaderKey(null);
+      return;
+    }
+
+    const newHeaders: Record<string, string> = {};
+    const currentHeaders = request.headers as Record<string, string>;
+    // Preserve order: rebuild headers with the edited one in place
+    for (const [k, v] of Object.entries(currentHeaders)) {
+      if (k === editingHeaderKey) {
+        newHeaders[editingHeaderNewKey.trim()] = editingHeaderNewValue;
+      } else if (k !== editingHeaderNewKey.trim()) {
+        // Only add if it's not the new key (to avoid duplicates)
+        newHeaders[k] = v;
+      }
+    }
+
+    onChange({
+      ...request,
+      headers: newHeaders,
+    });
+    setEditingHeaderKey(null);
+    setEditingHeaderNewKey('');
+    setEditingHeaderNewValue('');
+  };
+
+  const cancelEditingHeader = () => {
+    setEditingHeaderKey(null);
+    setEditingHeaderNewKey('');
+    setEditingHeaderNewValue('');
   };
 
   const getMethodColor = (method: string) => {
@@ -286,18 +329,77 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
                   key={key}
                   className="flex items-center gap-1.5 bg-dark-bg-tertiary px-2 py-1 rounded text-xs group"
                 >
-                  <span className="font-medium text-text-primary">{key}:</span>
-                  <span className="text-text-secondary truncate flex-1 font-mono">
-                    {value}
-                  </span>
-                  <button
-                    onClick={() => removeHeader(key)}
-                    className="text-text-tertiary hover:text-accent-error transition-colors opacity-0 group-hover:opacity-100"
-                  >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
+                  {editingHeaderKey === key ? (
+                    <>
+                      <input
+                        type="text"
+                        value={editingHeaderNewKey}
+                        onChange={(e) => setEditingHeaderNewKey(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEditingHeader();
+                          if (e.key === 'Escape') cancelEditingHeader();
+                        }}
+                        className="input flex-1 py-0.5 text-xs"
+                        placeholder="Header key"
+                        autoFocus
+                      />
+                      <span className="text-text-tertiary">:</span>
+                      <input
+                        type="text"
+                        value={editingHeaderNewValue}
+                        onChange={(e) => setEditingHeaderNewValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEditingHeader();
+                          if (e.key === 'Escape') cancelEditingHeader();
+                        }}
+                        className="input flex-1 py-0.5 text-xs font-mono"
+                        placeholder="Header value"
+                      />
+                      <button
+                        onClick={saveEditingHeader}
+                        className="text-text-tertiary hover:text-accent-success transition-colors"
+                        title="Save"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={cancelEditingHeader}
+                        className="text-text-tertiary hover:text-accent-error transition-colors"
+                        title="Cancel"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium text-text-primary">{key}:</span>
+                      <span className="text-text-secondary truncate flex-1 font-mono">
+                        {value}
+                      </span>
+                      <button
+                        onClick={() => startEditingHeader(key, value)}
+                        className="text-text-tertiary hover:text-accent-primary transition-colors opacity-0 group-hover:opacity-100"
+                        title="Edit header"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => removeHeader(key)}
+                        className="text-text-tertiary hover:text-accent-error transition-colors opacity-0 group-hover:opacity-100"
+                        title="Remove header"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </>
+                  )}
                 </div>
               ))}
             </div>

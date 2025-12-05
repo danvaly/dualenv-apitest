@@ -15,6 +15,8 @@ interface SidebarProps {
   onDeleteFolder: (folderId: string) => void;
   onToggleFolder: (folderId: string) => void;
   onSaveCurrentRequest: () => void;
+  onMoveRequest?: (requestId: string, targetFolderId: string | null, targetIndex?: number) => void;
+  onReorderRequests?: (requestIds: string[], folderId: string | null) => void;
   // Collection props
   collections: RequestCollection[];
   activeCollectionId: string | null;
@@ -38,6 +40,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   onDeleteFolder,
   onToggleFolder,
   onSaveCurrentRequest,
+  onMoveRequest,
+  onReorderRequests,
   collections,
   activeCollectionId,
   onSelectCollection,
@@ -59,6 +63,12 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const [editingRequestId, setEditingRequestId] = useState<string | null>(null);
   const [editingRequestName, setEditingRequestName] = useState('');
+
+  // Drag and drop state
+  const [draggedRequestId, setDraggedRequestId] = useState<string | null>(null);
+  const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null | 'root'>(null);
+  const [dropTargetRequestId, setDropTargetRequestId] = useState<string | null>(null);
+  const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null);
 
   const handleCreateFolder = () => {
     if (newFolderName.trim()) {
@@ -121,13 +131,104 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent, requestId: string) => {
+    setDraggedRequestId(requestId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', requestId);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedRequestId(null);
+    setDropTargetFolderId(null);
+    setDropTargetRequestId(null);
+    setDropPosition(null);
+  };
+
+  const handleDragOverFolder = (e: React.DragEvent, folderId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedRequestId) {
+      setDropTargetFolderId(folderId === null ? 'root' : folderId);
+      setDropTargetRequestId(null);
+      setDropPosition(null);
+    }
+  };
+
+  const handleDragOverRequest = (e: React.DragEvent, requestId: string, folderId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedRequestId && draggedRequestId !== requestId) {
+      const rect = (e.target as HTMLElement).getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      const position = e.clientY < midY ? 'before' : 'after';
+      setDropTargetRequestId(requestId);
+      setDropPosition(position);
+      setDropTargetFolderId(folderId === null ? 'root' : folderId);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    // Only clear if leaving the sidebar entirely
+    const relatedTarget = e.relatedTarget as HTMLElement;
+    if (!relatedTarget || !e.currentTarget.contains(relatedTarget)) {
+      setDropTargetFolderId(null);
+      setDropTargetRequestId(null);
+      setDropPosition(null);
+    }
+  };
+
+  const handleDropOnFolder = (e: React.DragEvent, folderId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedRequestId && onMoveRequest) {
+      const draggedRequest = requests.find(r => r.id === draggedRequestId);
+      if (draggedRequest && draggedRequest.folderId !== folderId) {
+        onMoveRequest(draggedRequestId, folderId);
+      }
+    }
+    handleDragEnd();
+  };
+
+  const handleDropOnRequest = (e: React.DragEvent, targetRequestId: string, folderId: string | null) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (draggedRequestId && draggedRequestId !== targetRequestId && onReorderRequests) {
+      const folderRequests = requests.filter(r => r.folderId === folderId);
+      const draggedRequest = requests.find(r => r.id === draggedRequestId);
+
+      if (draggedRequest) {
+        // If moving from different folder, first move to target folder
+        if (draggedRequest.folderId !== folderId && onMoveRequest) {
+          onMoveRequest(draggedRequestId, folderId);
+        }
+
+        // Reorder within the folder
+        const currentIds = folderRequests.map(r => r.id).filter(id => id !== draggedRequestId);
+        const targetIndex = currentIds.indexOf(targetRequestId);
+        const insertIndex = dropPosition === 'before' ? targetIndex : targetIndex + 1;
+        currentIds.splice(insertIndex, 0, draggedRequestId);
+        onReorderRequests(currentIds, folderId);
+      }
+    }
+    handleDragEnd();
+  };
+
   const renderFolder = (folder: Folder, depth: number = 0) => {
     const childFolders = folders.filter(f => f.parentId === folder.id);
     const folderRequests = requests.filter(r => r.folderId === folder.id);
+    const isDropTarget = dropTargetFolderId === folder.id && !dropTargetRequestId;
 
     return (
       <div key={folder.id} style={{ marginLeft: `${depth * 10}px` }}>
-        <div className="flex items-center gap-1 py-1 px-1.5 hover:bg-dark-bg-tertiary rounded group transition-colors">
+        <div
+          className={`flex items-center gap-1 py-1 px-1.5 hover:bg-dark-bg-tertiary rounded group transition-colors ${
+            isDropTarget ? 'bg-accent-primary/20 ring-1 ring-accent-primary' : ''
+          }`}
+          onDragOver={(e) => handleDragOverFolder(e, folder.id)}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDropOnFolder(e, folder.id)}
+        >
           <button
             onClick={() => onToggleFolder(folder.id)}
             className="text-text-tertiary hover:text-accent-primary transition-colors"
@@ -213,17 +314,32 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const renderRequest = (request: SavedRequest, depth: number = 0) => {
     const isSelected = currentRequestId === request.id;
+    const isDragging = draggedRequestId === request.id;
+    const isDropTargetRequest = dropTargetRequestId === request.id;
 
     return (
       <div
         key={request.id}
         style={{ marginLeft: `${depth * 10}px` }}
-        className={`flex items-center gap-1 py-1 px-1.5 rounded group cursor-pointer transition-all ${
+        className={`relative flex items-center gap-1 py-1 px-1.5 rounded group cursor-pointer transition-all ${
           isSelected
             ? 'bg-accent-primary text-white'
             : 'hover:bg-dark-bg-tertiary'
-        }`}
+        } ${isDragging ? 'opacity-50' : ''}`}
+        draggable
+        onDragStart={(e) => handleDragStart(e, request.id)}
+        onDragEnd={handleDragEnd}
+        onDragOver={(e) => handleDragOverRequest(e, request.id, request.folderId)}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => handleDropOnRequest(e, request.id, request.folderId)}
       >
+        {/* Drop position indicator */}
+        {isDropTargetRequest && dropPosition === 'before' && (
+          <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-accent-primary rounded" />
+        )}
+        {isDropTargetRequest && dropPosition === 'after' && (
+          <div className="absolute -bottom-0.5 left-0 right-0 h-0.5 bg-accent-primary rounded" />
+        )}
         <span className="w-3"></span>
 
         {editingRequestId === request.id ? (
@@ -305,7 +421,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const rootRequests = requests.filter(r => r.folderId === null);
 
   return (
-    <div className="w-56 sidebar h-screen overflow-y-auto flex flex-col">
+    <div className="w-full sidebar h-screen overflow-y-auto flex flex-col">
       {/* Collection Manager */}
       <CollectionManager
         collections={collections}
@@ -422,9 +538,21 @@ const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      <div className="flex-1 p-1.5 overflow-y-auto">
+      <div
+        className="flex-1 p-1.5 overflow-y-auto"
+        onDragOver={(e) => handleDragOverFolder(e, null)}
+        onDragLeave={handleDragLeave}
+        onDrop={(e) => handleDropOnFolder(e, null)}
+      >
         {rootFolders.map(f => renderFolder(f))}
         {rootRequests.map(r => renderRequest(r))}
+
+        {/* Root drop zone indicator */}
+        {draggedRequestId && dropTargetFolderId === 'root' && !dropTargetRequestId && (
+          <div className="mt-1 p-2 border-2 border-dashed border-accent-primary/50 rounded bg-accent-primary/10 text-center text-xs text-accent-primary">
+            Drop here to move to root
+          </div>
+        )}
 
         {folders.length === 0 && requests.length === 0 && (
           <div className="text-center text-text-tertiary text-xs mt-6 px-2">

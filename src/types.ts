@@ -94,6 +94,38 @@ export interface PanelSizes {
   diffPanelHeight: number; // percentage of response area (0-100)
 }
 
+export interface HistoryEntry {
+  id: string;
+  request: ApiRequest;
+  env1Response: ApiResponse | null;
+  env2Response: ApiResponse | null;
+  env1Name: string | null;
+  env2Name: string | null;
+  timestamp: number;
+}
+
+export interface HistorySettings {
+  maxEntries: number; // Maximum number of history entries to keep
+  enabled: boolean;
+}
+
+export interface ProxySettings {
+  enabled: boolean;
+  host: string;
+  port: string;
+  username: string;
+  password: string;
+  protocol: 'http' | 'https' | 'socks4' | 'socks5';
+}
+
+export interface ConsoleLogEntry {
+  id: string;
+  timestamp: number;
+  type: 'info' | 'request' | 'response' | 'error' | 'verbose';
+  message: string;
+  details?: string;
+}
+
 export interface AppConfig {
   version: number;
   environments: Environment[];
@@ -102,9 +134,12 @@ export interface AppConfig {
   corsSettings: CorsSettings;
   requestSettings: RequestSettings;
   diffSettings: DiffSettings;
+  proxySettings: ProxySettings;
   collections: RequestCollection[];
   activeCollectionId: string | null;
   openTabs: OpenTab[];
   activeTabId: string | null;
   panelSizes: PanelSizes;
+  history: HistoryEntry[];
+  historySettings: HistorySettings;
 }

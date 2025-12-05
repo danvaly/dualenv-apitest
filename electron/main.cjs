@@ -2,6 +2,11 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { exec } = require('child_process');
+const { autoUpdater } = require('electron-updater');
+
+// Configure auto-updater
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
 
 // Default config file path in user data directory
 const getConfigPath = () => {
@@ -27,6 +32,14 @@ const getDefaultConfig = () => {
     diffSettings: {
       ignoredPaths: [],
     },
+    proxySettings: {
+      enabled: false,
+      host: '',
+      port: '',
+      username: '',
+      password: '',
+      protocol: 'http',
+    },
     collections: [{
       id: defaultCollectionId,
       name: 'Default Collection',
@@ -42,6 +55,11 @@ const getDefaultConfig = () => {
       sidebarWidth: 240,
       requestPanelWidth: 50,
       diffPanelHeight: 40,
+    },
+    history: [],
+    historySettings: {
+      maxEntries: 100,
+      enabled: true,
     },
   };
 };
@@ -157,13 +175,30 @@ ipcMain.handle('import-config', async () => {
   }
 });
 
-// IPC handler for executing cURL requests
-ipcMain.handle('execute-curl', async (event, { method, url, headers, body }) => {
+// IPC handler for executing cURL requests with verbose output
+ipcMain.handle('execute-curl', async (event, { method, url, headers, body, proxySettings }) => {
   return new Promise((resolve) => {
     const startTime = Date.now();
+    const verboseLogs = [];
 
-    // Build cURL command
-    const curlParts = ['curl', '-s', '-w', '"\\n%{http_code}"', '-X', method];
+    // Build cURL command with verbose flag
+    // Use -v for verbose output, -s for silent (no progress), and custom format for status code
+    const curlParts = ['curl', '-v', '-s', '-w', '"\\n__HTTP_CODE__%{http_code}__END_CODE__"', '-X', method];
+
+    // Add proxy if enabled
+    if (proxySettings && proxySettings.enabled && proxySettings.host && proxySettings.port) {
+      let proxyUrl = `${proxySettings.protocol}://`;
+      if (proxySettings.username && proxySettings.password) {
+        proxyUrl += `${proxySettings.username}:${proxySettings.password}@`;
+      }
+      proxyUrl += `${proxySettings.host}:${proxySettings.port}`;
+
+      if (proxySettings.protocol === 'socks4' || proxySettings.protocol === 'socks5') {
+        curlParts.push('--proxy', `'${proxyUrl}'`);
+      } else {
+        curlParts.push('-x', `'${proxyUrl}'`);
+      }
+    }
 
     // Add headers
     if (headers) {
@@ -182,22 +217,51 @@ ipcMain.handle('execute-curl', async (event, { method, url, headers, body }) => 
 
     const curlCommand = curlParts.join(' ');
 
+    // Log the command being executed
+    verboseLogs.push({ type: 'request', message: `Executing: ${method} ${url}` });
+    verboseLogs.push({ type: 'verbose', message: `cURL command: ${curlCommand}` });
+
     exec(curlCommand, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
       const duration = Date.now() - startTime;
 
+      // Parse verbose output from stderr (cURL writes verbose to stderr)
+      if (stderr) {
+        const stderrLines = stderr.split('\n');
+        stderrLines.forEach(line => {
+          const trimmedLine = line.trim();
+          if (trimmedLine.startsWith('*')) {
+            // Connection info
+            verboseLogs.push({ type: 'verbose', message: trimmedLine });
+          } else if (trimmedLine.startsWith('>')) {
+            // Request headers
+            verboseLogs.push({ type: 'request', message: trimmedLine.substring(2) });
+          } else if (trimmedLine.startsWith('<')) {
+            // Response headers
+            verboseLogs.push({ type: 'response', message: trimmedLine.substring(2) });
+          } else if (trimmedLine.startsWith('{') || trimmedLine.startsWith('}')) {
+            // SSL/TLS info
+            verboseLogs.push({ type: 'verbose', message: trimmedLine });
+          }
+        });
+      }
+
       if (error && !stdout) {
+        verboseLogs.push({ type: 'error', message: error.message });
         resolve({
           error: error.message,
           stderr,
-          duration
+          duration,
+          verboseLogs
         });
         return;
       }
 
-      // Parse response - last line is status code
-      const lines = stdout.trim().split('\n');
-      const statusCode = parseInt(lines.pop(), 10) || 0;
-      const responseBody = lines.join('\n');
+      // Parse response - extract HTTP code using our marker
+      const httpCodeMatch = stdout.match(/__HTTP_CODE__(\d+)__END_CODE__/);
+      const statusCode = httpCodeMatch ? parseInt(httpCodeMatch[1], 10) : 0;
+
+      // Remove the HTTP code marker from the response body
+      const responseBody = stdout.replace(/__HTTP_CODE__\d+__END_CODE__/, '').trim();
 
       // Try to parse as JSON
       let data;
@@ -207,19 +271,119 @@ ipcMain.handle('execute-curl', async (event, { method, url, headers, body }) => 
         data = responseBody;
       }
 
+      // Parse response headers from verbose output
+      const responseHeaders = {};
+      if (stderr) {
+        const headerLines = stderr.split('\n').filter(line => line.trim().startsWith('<'));
+        headerLines.forEach(line => {
+          const headerLine = line.substring(2).trim();
+          const colonIndex = headerLine.indexOf(':');
+          if (colonIndex > 0) {
+            const key = headerLine.substring(0, colonIndex).trim().toLowerCase();
+            const value = headerLine.substring(colonIndex + 1).trim();
+            if (key && value && !key.startsWith('http/')) {
+              responseHeaders[key] = value;
+            }
+          }
+        });
+      }
+
+      verboseLogs.push({
+        type: 'info',
+        message: `Response received: ${statusCode} (${duration}ms)`
+      });
+
       resolve({
         status: statusCode,
         statusText: statusCode >= 200 && statusCode < 300 ? 'OK' : 'Error',
         data,
         duration,
-        headers: {}
+        headers: responseHeaders,
+        verboseLogs
       });
     });
   });
 });
 
+// Auto-updater event handlers
+autoUpdater.on('checking-for-update', () => {
+  sendUpdateStatus('checking');
+});
+
+autoUpdater.on('update-available', (info) => {
+  sendUpdateStatus('available', info);
+});
+
+autoUpdater.on('update-not-available', (info) => {
+  sendUpdateStatus('not-available', info);
+});
+
+autoUpdater.on('error', (err) => {
+  sendUpdateStatus('error', { message: err.message });
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  sendUpdateStatus('downloading', {
+    percent: progressObj.percent,
+    bytesPerSecond: progressObj.bytesPerSecond,
+    transferred: progressObj.transferred,
+    total: progressObj.total,
+  });
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  sendUpdateStatus('downloaded', info);
+});
+
+// Helper to send update status to renderer
+function sendUpdateStatus(status, data = {}) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-status', { status, ...data });
+  }
+}
+
+// IPC handler for checking updates
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { success: true, updateInfo: result?.updateInfo };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC handler for downloading update
+ipcMain.handle('download-update', async () => {
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC handler for installing update
+ipcMain.handle('install-update', async () => {
+  autoUpdater.quitAndInstall(false, true);
+  return { success: true };
+});
+
+// IPC handler for getting current app version
+ipcMain.handle('get-app-version', async () => {
+  return app.getVersion();
+});
+
 app.whenReady().then(() => {
   createWindow();
+
+  // Check for updates after window is ready (only in production)
+  if (!process.env.VITE_DEV_SERVER_URL) {
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch(err => {
+        console.log('Auto-update check failed:', err.message);
+      });
+    }, 3000); // Wait 3 seconds before checking
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

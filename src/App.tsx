@@ -2,12 +2,16 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import RequestBuilder from './components/RequestBuilder';
 import ResponseComparison from './components/ResponseComparison';
 import Sidebar from './components/Sidebar';
-import CorsSettingsComponent from './components/CorsSettings';
 import EnvironmentManager from './components/EnvironmentManager';
 import TabBar from './components/TabBar';
 import ResizeHandle from './components/ResizeHandle';
 import CurlModal from './components/CurlModal';
-import type { Environment, EnvironmentVariable, ApiRequest, ApiResponse, ComparisonResult, Folder, SavedRequest, RequestCollection, OpenTab, PanelSizes, AppConfig } from './types';
+import SaveRequestDialog from './components/SaveRequestDialog';
+import HistoryPanel from './components/HistoryPanel';
+import UpdateNotification from './components/UpdateNotification';
+import ConsolePanel from './components/ConsolePanel';
+import SettingsPage from './components/SettingsPage';
+import type { Environment, EnvironmentVariable, ApiRequest, ApiResponse, ComparisonResult, Folder, SavedRequest, RequestCollection, OpenTab, PanelSizes, AppConfig, HistoryEntry, HistorySettings, ProxySettings, ConsoleLogEntry } from './types';
 
 const STORAGE_KEY = 'dual-env-tester-config';
 
@@ -46,6 +50,20 @@ const createDefaultCollection = (): RequestCollection => ({
   updatedAt: Date.now(),
 });
 
+const DEFAULT_HISTORY_SETTINGS: HistorySettings = {
+  maxEntries: 100,
+  enabled: true,
+};
+
+const DEFAULT_PROXY_SETTINGS: ProxySettings = {
+  enabled: false,
+  host: '',
+  port: '',
+  username: '',
+  password: '',
+  protocol: 'http',
+};
+
 const getDefaultConfig = (): AppConfig => {
   const defaultTab = createDefaultTab();
   const defaultCollection = createDefaultCollection();
@@ -65,11 +83,14 @@ const getDefaultConfig = (): AppConfig => {
     diffSettings: {
       ignoredPaths: [],
     },
+    proxySettings: DEFAULT_PROXY_SETTINGS,
     collections: [defaultCollection],
     activeCollectionId: defaultCollection.id,
     openTabs: [defaultTab],
     activeTabId: defaultTab.id,
     panelSizes: DEFAULT_PANEL_SIZES,
+    history: [],
+    historySettings: DEFAULT_HISTORY_SETTINGS,
   };
 };
 
@@ -92,12 +113,18 @@ function App() {
   const mainContentRef = useRef<HTMLDivElement>(null);
 
   const [showEnvConfig, setShowEnvConfig] = useState(true);
-  const [showCorsConfig, setShowCorsConfig] = useState(true);
   const [curlModal, setCurlModal] = useState<{ isOpen: boolean; curlCommand: string; envName: string }>({
     isOpen: false,
     curlCommand: '',
     envName: '',
   });
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [showSettingsPage, setShowSettingsPage] = useState(false);
+  const [consoleLogs, setConsoleLogs] = useState<ConsoleLogEntry[]>([]);
+  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [consoleHeight, setConsoleHeight] = useState(192);
 
   // Load config on mount
   useEffect(() => {
@@ -160,6 +187,17 @@ function App() {
           // Ensure activeCollectionId is valid
           if (!loadedConfig.activeCollectionId || !loadedConfig.collections.find(c => c.id === loadedConfig.activeCollectionId)) {
             loadedConfig.activeCollectionId = loadedConfig.collections[0].id;
+          }
+          // Migrate old config without history
+          if (!loadedConfig.history) {
+            loadedConfig.history = [];
+          }
+          if (!loadedConfig.historySettings) {
+            loadedConfig.historySettings = DEFAULT_HISTORY_SETTINGS;
+          }
+          // Migrate old config without proxy settings
+          if (!loadedConfig.proxySettings) {
+            loadedConfig.proxySettings = DEFAULT_PROXY_SETTINGS;
           }
           setConfig(loadedConfig);
         } else {
@@ -239,6 +277,7 @@ function App() {
   const corsSettings = config?.corsSettings || getDefaultConfig().corsSettings;
   const requestSettings = config?.requestSettings || getDefaultConfig().requestSettings;
   const diffSettings = config?.diffSettings || getDefaultConfig().diffSettings;
+  const proxySettings = config?.proxySettings || getDefaultConfig().proxySettings;
   const collections = config?.collections || getDefaultConfig().collections;
   const activeCollectionId = config?.activeCollectionId || null;
   const activeCollection = collections.find(c => c.id === activeCollectionId) || collections[0] || null;
@@ -246,6 +285,8 @@ function App() {
   const activeTabId = config?.activeTabId || null;
   const activeTab = openTabs.find(t => t.id === activeTabId) || openTabs[0] || null;
   const panelSizes = config?.panelSizes || DEFAULT_PANEL_SIZES;
+  const history = config?.history || [];
+  const historySettings = config?.historySettings || DEFAULT_HISTORY_SETTINGS;
 
   // Determine if we're in single or dual environment mode
   const isDualMode = selectedEnv1 !== null && selectedEnv2 !== null;
@@ -656,7 +697,7 @@ function App() {
     });
   };
 
-  const handleSaveCurrentRequest = () => {
+  const handleSaveCurrentRequest = useCallback(() => {
     if (!activeTab || !activeTab.savedRequestId || !activeCollection) return;
 
     updateConfig({
@@ -677,7 +718,69 @@ function App() {
         t.id === activeTab.id ? { ...t, isDirty: false } : t
       ),
     });
-  };
+  }, [activeTab, activeCollection, collections, openTabs, updateConfig]);
+
+  // Keyboard shortcut handler (Cmd/Ctrl+S to save)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        if (activeTab?.isDirty) {
+          if (activeTab.savedRequestId) {
+            // Request already exists, just save changes
+            handleSaveCurrentRequest();
+          } else {
+            // New request, show save dialog
+            setShowSaveDialog(true);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTab, handleSaveCurrentRequest]);
+
+  // Handle tab close with unsaved changes confirmation
+  const handleCloseTabWithConfirm = useCallback((tabId: string) => {
+    const tab = openTabs.find((t: OpenTab) => t.id === tabId);
+    if (tab?.isDirty) {
+      setPendingCloseTabId(tabId);
+    } else {
+      handleCloseTab(tabId);
+    }
+  }, [openTabs]);
+
+  // Confirm close tab (discard changes)
+  const confirmCloseTab = useCallback(() => {
+    if (pendingCloseTabId) {
+      handleCloseTab(pendingCloseTabId);
+      setPendingCloseTabId(null);
+    }
+  }, [pendingCloseTabId]);
+
+  // Cancel close tab
+  const cancelCloseTab = useCallback(() => {
+    setPendingCloseTabId(null);
+  }, []);
+
+  // Save and close tab
+  const saveAndCloseTab = useCallback(() => {
+    if (pendingCloseTabId) {
+      const tab = openTabs.find((t: OpenTab) => t.id === pendingCloseTabId);
+      if (tab?.savedRequestId) {
+        // Save existing request
+        if (activeTab && activeTab.id === pendingCloseTabId) {
+          handleSaveCurrentRequest();
+        }
+        handleCloseTab(pendingCloseTabId);
+        setPendingCloseTabId(null);
+      } else {
+        // New request - show save dialog
+        setShowSaveDialog(true);
+      }
+    }
+  }, [pendingCloseTabId, openTabs, activeTab, handleSaveCurrentRequest]);
 
   const handleDeleteRequest = (requestId: string) => {
     if (!activeCollection) return;
@@ -696,6 +799,113 @@ function App() {
       ),
     });
   };
+
+  // Move request to a different folder
+  const handleMoveRequest = (requestId: string, targetFolderId: string | null) => {
+    if (!activeCollection) return;
+    updateActiveCollection({
+      requests: activeCollection.requests.map((r: SavedRequest) =>
+        r.id === requestId ? { ...r, folderId: targetFolderId, updatedAt: Date.now() } : r
+      ),
+    });
+  };
+
+  // Reorder requests within a folder
+  const handleReorderRequests = (requestIds: string[], folderId: string | null) => {
+    if (!activeCollection) return;
+
+    // Get requests not in the target folder (unchanged)
+    const otherRequests = activeCollection.requests.filter((r: SavedRequest) => r.folderId !== folderId);
+
+    // Get the reordered requests for this folder
+    const reorderedRequests = requestIds
+      .map(id => activeCollection.requests.find((r: SavedRequest) => r.id === id))
+      .filter((r): r is SavedRequest => r !== undefined);
+
+    updateActiveCollection({
+      requests: [...otherRequests, ...reorderedRequests],
+    });
+  };
+
+  // History management handlers
+  const addHistoryEntry = useCallback((
+    request: ApiRequest,
+    env1Response: ApiResponse | null,
+    env2Response: ApiResponse | null,
+    env1NameValue: string | null,
+    env2NameValue: string | null
+  ) => {
+    if (!historySettings.enabled) return;
+
+    const newEntry: HistoryEntry = {
+      id: `history-${Date.now()}`,
+      request: { ...request },
+      env1Response,
+      env2Response,
+      env1Name: env1NameValue,
+      env2Name: env2NameValue,
+      timestamp: Date.now(),
+    };
+
+    const newHistory = [newEntry, ...history].slice(0, historySettings.maxEntries);
+    updateConfig({ history: newHistory });
+  }, [history, historySettings, updateConfig]);
+
+  const handleDeleteHistoryEntry = useCallback((entryId: string) => {
+    updateConfig({ history: history.filter((e: HistoryEntry) => e.id !== entryId) });
+  }, [history, updateConfig]);
+
+  const handleClearHistory = useCallback(() => {
+    updateConfig({ history: [] });
+  }, [updateConfig]);
+
+  const handleUpdateHistorySettings = useCallback((settings: HistorySettings) => {
+    updateConfig({ historySettings: settings });
+  }, [updateConfig]);
+
+  // Console log helper
+  const addConsoleLog = useCallback((type: ConsoleLogEntry['type'], message: string, details?: string) => {
+    const entry: ConsoleLogEntry = {
+      id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: Date.now(),
+      type,
+      message,
+      details,
+    };
+    setConsoleLogs(prev => [...prev, entry]);
+  }, []);
+
+  const clearConsoleLogs = useCallback(() => {
+    setConsoleLogs([]);
+  }, []);
+
+  const handleSelectHistoryEntry = useCallback((request: ApiRequest, entry: HistoryEntry) => {
+    // Create a new tab with the request from history
+    const title = request.endpoint
+      ? request.endpoint.split('?')[0].split('/').filter(Boolean).pop() || 'From History'
+      : 'From History';
+
+    const newTab: OpenTab = {
+      id: `tab-${Date.now()}`,
+      title,
+      request: { ...request },
+      savedRequestId: null,
+      isDirty: false,
+      comparison: {
+        env1: entry.env1Response,
+        env2: entry.env2Response,
+        loading: false,
+        loading1: false,
+        loading2: false,
+      },
+    };
+
+    updateConfig({
+      openTabs: [...openTabs, newTab],
+      activeTabId: newTab.id,
+    });
+    setShowHistoryPanel(false);
+  }, [openTabs, updateConfig]);
 
   const handleSelectRequest = (apiRequest: ApiRequest, requestId: string) => {
     if (!activeCollection) return;
@@ -738,13 +948,25 @@ function App() {
       url = `${corsSettings.proxyUrl}${url}`;
     }
 
+    // Log request start
+    addConsoleLog('request', `Fetch: ${request.method} ${url}`);
+
     try {
-      const headers = {
+      const headers: Record<string, string> = {
         ...substituted.headers,
       };
 
       if (substituted.body && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
         headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+      }
+
+      // Log request headers
+      Object.entries(headers).forEach(([key, value]) => {
+        addConsoleLog('verbose', `> ${key}: ${value}`);
+      });
+
+      if (substituted.body) {
+        addConsoleLog('verbose', `> Body: ${substituted.body.length} bytes`);
       }
 
       const response = await fetch(url, {
@@ -759,6 +981,14 @@ function App() {
       const contentType = response.headers.get('content-type');
       let data;
 
+      // Log response status
+      addConsoleLog('response', `< ${response.status} ${response.statusText}`);
+
+      // Log response headers
+      response.headers.forEach((value, key) => {
+        addConsoleLog('verbose', `< ${key}: ${value}`);
+      });
+
       if (contentType && contentType.includes('application/json')) {
         data = await response.json();
       } else {
@@ -770,6 +1000,8 @@ function App() {
         responseHeaders[key] = value;
       });
 
+      addConsoleLog('info', `Response received: ${response.status} (${duration}ms)`);
+
       return {
         status: response.status,
         statusText: response.statusText,
@@ -780,12 +1012,14 @@ function App() {
       };
     } catch (error) {
       const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      addConsoleLog('error', `Request failed: ${errorMessage}`);
       return {
         status: 0,
         statusText: 'Error',
         data: null,
         headers: {},
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        error: errorMessage,
         timestamp: Date.now(),
         duration,
       };
@@ -812,9 +1046,18 @@ function App() {
           url,
           headers,
           body: substituted.body,
+          proxySettings: proxySettings,
         });
 
+        // Add verbose logs to console
+        if (result.verboseLogs) {
+          result.verboseLogs.forEach(log => {
+            addConsoleLog(log.type as ConsoleLogEntry['type'], log.message);
+          });
+        }
+
         if (result.error) {
+          addConsoleLog('error', `Request failed: ${result.error}`);
           return {
             status: 0,
             statusText: 'Error',
@@ -836,12 +1079,14 @@ function App() {
         };
       } catch (error) {
         const duration = Date.now() - startTime;
+        const errorMessage = error instanceof Error ? error.message : 'Electron cURL failed';
+        addConsoleLog('error', `Request exception: ${errorMessage}`);
         return {
           status: 0,
           statusText: 'Error',
           data: null,
           headers: {},
-          error: error instanceof Error ? error.message : 'Electron cURL failed',
+          error: errorMessage,
           timestamp: Date.now(),
           duration,
         };
@@ -927,6 +1172,14 @@ function App() {
           loading1: false,
           loading2: false,
         });
+        // Add to history
+        addHistoryEntry(
+          activeTab.request,
+          isEnv1 ? response : null,
+          isEnv1 ? null : response,
+          isEnv1 ? singleEnv.name : null,
+          isEnv1 ? null : singleEnv.name
+        );
       } catch (error) {
         console.error('Error sending request:', error);
         updateActiveTabComparison({
@@ -961,6 +1214,14 @@ function App() {
         loading1: false,
         loading2: false,
       });
+      // Add to history
+      addHistoryEntry(
+        activeTab.request,
+        response1,
+        response2,
+        selectedEnv1?.name || null,
+        selectedEnv2?.name || null
+      );
     } catch (error) {
       console.error('Error sending requests:', error);
       updateActiveTabComparison({
@@ -1046,6 +1307,8 @@ function App() {
           onDeleteFolder={handleDeleteFolder}
           onToggleFolder={handleToggleFolder}
           onSaveCurrentRequest={handleSaveCurrentRequest}
+          onMoveRequest={handleMoveRequest}
+          onReorderRequests={handleReorderRequests}
           collections={collections}
           activeCollectionId={activeCollectionId}
           onSelectCollection={handleSelectCollection}
@@ -1069,7 +1332,7 @@ function App() {
           tabs={openTabs}
           activeTabId={activeTabId}
           onSelectTab={handleSelectTab}
-          onCloseTab={handleCloseTab}
+          onCloseTab={handleCloseTabWithConfirm}
           onNewTab={handleNewTab}
         />
 
@@ -1077,10 +1340,39 @@ function App() {
           <div className="py-3 px-4">
             {/* Header */}
             <header className="mb-3 flex items-center justify-between">
-              <h1 className="text-lg font-semibold text-text-primary tracking-tight">
-                API Tester
-              </h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-lg font-semibold text-text-primary tracking-tight">
+                  API Tester
+                </h1>
+                {window.electronAPI?.isElectron && <UpdateNotification />}
+              </div>
               <div className="flex gap-2">
+                <button
+                  onClick={() => setShowHistoryPanel(!showHistoryPanel)}
+                  className={`btn text-xs flex items-center gap-1 ${showHistoryPanel ? 'bg-accent-primary/20 text-accent-primary' : ''}`}
+                  title="Request History"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  History
+                  {history.length > 0 && (
+                    <span className="badge bg-accent-primary/20 text-accent-primary text-xs px-1.5 py-0">
+                      {history.length}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowSettingsPage(true)}
+                  className="btn text-xs flex items-center gap-1"
+                  title="Settings"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Settings
+                </button>
                 {window.electronAPI?.isElectron && (
                   <button
                     onClick={() => window.electronAPI?.toggleDevTools()}
@@ -1156,28 +1448,6 @@ function App() {
                   )}
                 </div>
               </div>
-
-              {/* CORS Configuration Disclosure */}
-              {requestSettings.mode === 'fetch' && (
-                <div>
-                  <button
-                    onClick={() => setShowCorsConfig(!showCorsConfig)}
-                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-accent-primary mb-1.5 transition-colors"
-                  >
-                    <svg
-                      className={`w-3 h-3 transition-transform duration-200 ${showCorsConfig ? 'rotate-90' : ''}`}
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span className="font-medium">CORS Configuration</span>
-                  </button>
-                  {showCorsConfig && (
-                    <CorsSettingsComponent settings={corsSettings} onChange={(settings) => updateConfig({ corsSettings: settings })} />
-                  )}
-                </div>
-              )}
 
               {/* Environment Configuration Disclosure */}
               <div>
@@ -1311,6 +1581,16 @@ function App() {
             </div>
           </div>
         </div>
+
+        {/* Console Panel */}
+        <ConsolePanel
+          logs={consoleLogs}
+          isOpen={isConsoleOpen}
+          onToggle={() => setIsConsoleOpen(!isConsoleOpen)}
+          onClear={clearConsoleLogs}
+          height={consoleHeight}
+          onHeightChange={setConsoleHeight}
+        />
       </div>
 
       {/* cURL Modal */}
@@ -1319,6 +1599,98 @@ function App() {
         onClose={handleCloseCurlModal}
         curlCommand={curlModal.curlCommand}
         envName={curlModal.envName}
+      />
+
+      {/* Unsaved Changes Confirmation Dialog */}
+      {pendingCloseTabId && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="card p-4 max-w-md mx-4">
+            <h3 className="text-lg font-semibold text-text-primary mb-2">Unsaved Changes</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              You have unsaved changes. Do you want to save before closing?
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={cancelCloseTab} className="btn text-xs">
+                Cancel
+              </button>
+              <button onClick={confirmCloseTab} className="btn text-xs text-accent-error">
+                Don't Save
+              </button>
+              <button onClick={saveAndCloseTab} className="btn-primary text-xs">
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Save Request Dialog */}
+      {showSaveDialog && (
+        <SaveRequestDialog
+          folders={activeCollection?.folders || []}
+          onSave={(name, folderId) => {
+            handleSaveRequest(name, folderId);
+            setShowSaveDialog(false);
+            if (pendingCloseTabId) {
+              handleCloseTab(pendingCloseTabId);
+              setPendingCloseTabId(null);
+            }
+          }}
+          onCancel={() => {
+            setShowSaveDialog(false);
+            setPendingCloseTabId(null);
+          }}
+        />
+      )}
+
+      {/* History Panel Slide-out */}
+      {showHistoryPanel && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/30 z-40"
+            onClick={() => setShowHistoryPanel(false)}
+          />
+          {/* Panel */}
+          <div className="fixed top-0 right-0 h-full w-80 bg-dark-bg-secondary border-l border-dark-border shadow-xl z-50 animate-slide-in-right">
+            <div className="flex items-center justify-between p-3 border-b border-dark-border">
+              <h2 className="text-sm font-semibold text-text-primary">Request History</h2>
+              <button
+                onClick={() => setShowHistoryPanel(false)}
+                className="p-1 text-text-tertiary hover:text-text-primary rounded transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="h-[calc(100%-48px)]">
+              <HistoryPanel
+                history={history}
+                historySettings={historySettings}
+                onSelectEntry={handleSelectHistoryEntry}
+                onDeleteEntry={handleDeleteHistoryEntry}
+                onClearHistory={handleClearHistory}
+                onUpdateSettings={handleUpdateHistorySettings}
+              />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Settings Page Modal */}
+      <SettingsPage
+        isOpen={showSettingsPage}
+        onClose={() => setShowSettingsPage(false)}
+        corsSettings={corsSettings}
+        requestSettings={requestSettings}
+        proxySettings={proxySettings}
+        historySettings={historySettings}
+        onCorsSettingsChange={(settings) => updateConfig({ corsSettings: settings })}
+        onRequestSettingsChange={(settings) => updateConfig({ requestSettings: settings })}
+        onProxySettingsChange={(settings) => updateConfig({ proxySettings: settings })}
+        onHistorySettingsChange={(settings) => updateConfig({ historySettings: settings })}
+        isElectron={!!window.electronAPI?.isElectron}
       />
     </div>
   );
