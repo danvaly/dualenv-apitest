@@ -1,4 +1,5 @@
 import type { OpenTab } from '../types';
+import Tooltip from './Tooltip';
 
 interface TabBarProps {
   tabs: OpenTab[];
@@ -43,30 +44,32 @@ export default function TabBar({
               {tab.title}
               {tab.isDirty && <span className="text-accent-primary ml-0.5">•</span>}
             </span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onCloseTab(tab.id);
-              }}
-              className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-dark-border transition-all shrink-0"
-              title="Close tab"
-            >
-              <svg className="w-3 h-3 text-text-muted hover:text-text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            <Tooltip content="Close tab">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCloseTab(tab.id);
+                }}
+                className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-dark-border transition-all shrink-0"
+              >
+                <svg className="w-3 h-3 text-text-muted hover:text-text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </Tooltip>
           </div>
         ))}
       </div>
-      <button
-        onClick={onNewTab}
-        className="p-2 hover:bg-dark-surface transition-colors shrink-0"
-        title="New tab"
-      >
-        <svg className="w-4 h-4 text-text-muted hover:text-text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-        </svg>
-      </button>
+      <Tooltip content="New tab">
+        <button
+          onClick={onNewTab}
+          className="p-2 hover:bg-dark-surface transition-colors shrink-0"
+        >
+          <svg className="w-4 h-4 text-text-muted hover:text-text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+        </button>
+      </Tooltip>
     </div>
   );
 }

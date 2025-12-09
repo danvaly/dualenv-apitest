@@ -1,7 +1,7 @@
 {
   "name": "dual-env-tester",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A dual API tester for comparing API responses across different environments",
   "author": "Dual Env Tester",
   "homepage": "https://github.com/danvaly/dualenv-apitest",

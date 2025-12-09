@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { ApiRequest } from '../types';
+import Tooltip from './Tooltip';
 
 interface RequestBuilderProps {
   request: ApiRequest;
@@ -210,30 +211,33 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
             <div className="flex gap-1">
               {isSingleMode ? (
                 // Single environment mode - show one button
-                <button
-                  onClick={() => onShowCurl(singleEnvIndex || 1)}
-                  className="btn text-xs px-2"
-                  title="Show cURL command"
-                >
-                  cURL
-                </button>
+                <Tooltip content="Show cURL command">
+                  <button
+                    onClick={() => onShowCurl(singleEnvIndex || 1)}
+                    className="btn text-xs px-2"
+                  >
+                    cURL
+                  </button>
+                </Tooltip>
               ) : (
                 // Dual environment mode - show both buttons
                 <>
-                  <button
-                    onClick={() => onShowCurl(1)}
-                    className="btn text-xs px-2"
-                    title="Show cURL for Environment 1"
-                  >
-                    cURL 1
-                  </button>
-                  <button
-                    onClick={() => onShowCurl(2)}
-                    className="btn text-xs px-2"
-                    title="Show cURL for Environment 2"
-                  >
-                    cURL 2
-                  </button>
+                  <Tooltip content="Show cURL for Environment 1">
+                    <button
+                      onClick={() => onShowCurl(1)}
+                      className="btn text-xs px-2"
+                    >
+                      cURL 1
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="Show cURL for Environment 2">
+                    <button
+                      onClick={() => onShowCurl(2)}
+                      className="btn text-xs px-2"
+                    >
+                      cURL 2
+                    </button>
+                  </Tooltip>
                 </>
               )}
             </div>
@@ -355,24 +359,26 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
                         className="input flex-1 py-0.5 text-xs font-mono"
                         placeholder="Header value"
                       />
-                      <button
-                        onClick={saveEditingHeader}
-                        className="text-text-tertiary hover:text-accent-success transition-colors"
-                        title="Save"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={cancelEditingHeader}
-                        className="text-text-tertiary hover:text-accent-error transition-colors"
-                        title="Cancel"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                      <Tooltip content="Save">
+                        <button
+                          onClick={saveEditingHeader}
+                          className="text-text-tertiary hover:text-accent-success transition-colors"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Cancel">
+                        <button
+                          onClick={cancelEditingHeader}
+                          className="text-text-tertiary hover:text-accent-error transition-colors"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </Tooltip>
                     </>
                   ) : (
                     <>
@@ -380,24 +386,26 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
                       <span className="text-text-secondary truncate flex-1 font-mono">
                         {value}
                       </span>
-                      <button
-                        onClick={() => startEditingHeader(key, value)}
-                        className="text-text-tertiary hover:text-accent-primary transition-colors opacity-0 group-hover:opacity-100"
-                        title="Edit header"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => removeHeader(key)}
-                        className="text-text-tertiary hover:text-accent-error transition-colors opacity-0 group-hover:opacity-100"
-                        title="Remove header"
-                      >
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                      <Tooltip content="Edit header">
+                        <button
+                          onClick={() => startEditingHeader(key, value)}
+                          className="text-text-tertiary hover:text-accent-primary transition-colors opacity-0 group-hover:opacity-100"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Remove header">
+                        <button
+                          onClick={() => removeHeader(key)}
+                          className="text-text-tertiary hover:text-accent-error transition-colors opacity-0 group-hover:opacity-100"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </Tooltip>
                     </>
                   )}
                 </div>
@@ -420,14 +428,16 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
               className="input flex-1 text-xs"
               placeholder="Header value"
             />
-            <button
-              onClick={addHeader}
-              className="btn px-3 text-xs"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-            </button>
+            <Tooltip content="Add header">
+              <button
+                onClick={addHeader}
+                className="btn px-3 text-xs"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+            </Tooltip>
           </div>
         </div>
       </div>

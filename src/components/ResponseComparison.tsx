@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import type { ApiResponse } from '../types';
 import * as Diff from 'diff';
 import JsonDisplay from './JsonDisplay';
+import Tooltip from './Tooltip';
 
 interface ResponseComparisonProps {
   env1Name: string;
@@ -437,14 +438,16 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
                     className="inline-flex items-center gap-1 px-1.5 py-0.5 text-xs bg-[#21262d] rounded border border-[#30363d]"
                   >
                     <code className="text-[#c9d1d9] font-mono">{path}</code>
-                    <button
-                      onClick={() => handleRemoveIgnoredPath(path)}
-                      className="text-[#8b949e] hover:text-[#f85149] transition-colors"
-                    >
-                      <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
+                    <Tooltip content="Remove ignored path">
+                      <button
+                        onClick={() => handleRemoveIgnoredPath(path)}
+                        className="text-[#8b949e] hover:text-[#f85149] transition-colors"
+                      >
+                        <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </Tooltip>
                   </span>
                 ))}
               </div>

@@ -1,7 +1,32 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { diffJson, type Change } from 'diff';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import Tooltip from '../Tooltip';
 
 type ViewMode = 'side-by-side' | 'inline';
+
+// Custom dark theme for syntax highlighting
+const darkCodeTheme = {
+  ...oneDark,
+  'pre[class*="language-"]': {
+    ...oneDark['pre[class*="language-"]'],
+    background: 'transparent',
+    margin: 0,
+    padding: '12px',
+    fontSize: '13px',
+    fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
+    lineHeight: '1.4',
+    overflow: 'auto',
+  },
+  'code[class*="language-"]': {
+    ...oneDark['code[class*="language-"]'],
+    background: 'transparent',
+    fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
+    fontSize: '13px',
+    lineHeight: '1.4',
+  },
+};
 
 // Recursively sort object keys and array elements for semantic comparison
 const sortObjectKeys = (obj: unknown): unknown => {
@@ -35,6 +60,8 @@ export default function JsonDiff() {
   const [viewMode, setViewMode] = useState<ViewMode>('side-by-side');
   const [showOnlyDiffs, setShowOnlyDiffs] = useState(false);
   const [ignoreKeyOrder, setIgnoreKeyOrder] = useState(true);
+  const leftContainerRef = useRef<HTMLDivElement>(null);
+  const rightContainerRef = useRef<HTMLDivElement>(null);
 
   const parseAndFormat = useCallback((json: string, normalize: boolean): { parsed: object; formatted: string } | null => {
     if (!json.trim()) return null;
@@ -113,6 +140,54 @@ export default function JsonDiff() {
     setLeftJson(rightJson);
     setRightJson(temp);
   };
+
+  // Beautify JSON for a given side
+  const handleBeautify = (side: 'left' | 'right') => {
+    try {
+      const json = side === 'left' ? leftJson : rightJson;
+      if (!json.trim()) return;
+      const parsed = JSON.parse(json);
+      const formatted = JSON.stringify(parsed, null, 2);
+      if (side === 'left') {
+        setLeftJson(formatted);
+      } else {
+        setRightJson(formatted);
+      }
+    } catch {
+      // Invalid JSON, do nothing
+    }
+  };
+
+  // Sync scroll between textarea and syntax highlighter
+  const handleScroll = useCallback((e: React.UIEvent<HTMLTextAreaElement>, containerRef: React.RefObject<HTMLDivElement | null>) => {
+    if (containerRef.current) {
+      const pre = containerRef.current.querySelector('pre');
+      if (pre) {
+        pre.scrollTop = e.currentTarget.scrollTop;
+        pre.scrollLeft = e.currentTarget.scrollLeft;
+      }
+    }
+  }, []);
+
+  // Handle tab key for indentation
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>, side: 'left' | 'right') => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const textarea = e.currentTarget;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const value = textarea.value;
+      const newValue = value.substring(0, start) + '  ' + value.substring(end);
+      if (side === 'left') {
+        setLeftJson(newValue);
+      } else {
+        setRightJson(newValue);
+      }
+      setTimeout(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + 2;
+      }, 0);
+    }
+  }, []);
 
   const renderSideBySide = (changes: Change[]) => {
     const leftLines: { text: string; type: 'normal' | 'removed' }[] = [];
@@ -306,27 +381,84 @@ export default function JsonDiff() {
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-text-secondary">Left JSON</span>
             <div className="flex gap-1">
-              <button onClick={() => handlePaste('left')} className="btn text-xs px-2 py-1" title="Paste">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-              </button>
-              <button onClick={() => handleClear('left')} className="btn text-xs px-2 py-1" title="Clear">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
+              <Tooltip content="Beautify">
+                <button onClick={() => handleBeautify('left')} className="btn text-xs px-2 py-1">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                  </svg>
+                </button>
+              </Tooltip>
+              <Tooltip content="Paste">
+                <button onClick={() => handlePaste('left')} className="btn text-xs px-2 py-1">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                </button>
+              </Tooltip>
+              <Tooltip content="Clear">
+                <button onClick={() => handleClear('left')} className="btn text-xs px-2 py-1">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </Tooltip>
             </div>
           </div>
-          <textarea
-            value={leftJson}
-            onChange={(e) => setLeftJson(e.target.value)}
-            placeholder="Paste left JSON here..."
-            className={`h-32 w-full bg-dark-bg border rounded p-3 text-sm font-mono text-text-primary resize-none focus:outline-none focus:ring-1 ${
-              error.left ? 'border-accent-error focus:ring-accent-error' : 'border-dark-border focus:ring-accent-primary'
+          <div
+            ref={leftContainerRef}
+            className={`h-32 relative rounded border focus-within:ring-1 bg-dark-bg overflow-hidden ${
+              error.left ? 'border-accent-error focus-within:ring-accent-error' : 'border-dark-border focus-within:ring-accent-primary'
             }`}
-            spellCheck={false}
-          />
+          >
+            {/* Syntax highlighted background */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+              <SyntaxHighlighter
+                language="json"
+                style={darkCodeTheme}
+                customStyle={{
+                  margin: 0,
+                  padding: '12px',
+                  background: 'transparent',
+                  height: '100%',
+                  overflow: 'hidden',
+                }}
+                codeTagProps={{
+                  style: {
+                    fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
+                    fontSize: '13px',
+                    lineHeight: '1.4',
+                  }
+                }}
+              >
+                {leftJson || ' '}
+              </SyntaxHighlighter>
+            </div>
+            {/* Transparent textarea for editing */}
+            <textarea
+              value={leftJson}
+              onChange={(e) => setLeftJson(e.target.value)}
+              onScroll={(e) => handleScroll(e, leftContainerRef)}
+              onKeyDown={(e) => handleKeyDown(e, 'left')}
+              className="relative w-full h-full bg-transparent text-transparent caret-white resize-none font-mono outline-none"
+              style={{
+                padding: '12px',
+                fontSize: '13px',
+                lineHeight: '1.4',
+                fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
+                caretColor: '#58a6ff',
+              }}
+              spellCheck={false}
+            />
+            {/* Placeholder when empty */}
+            {!leftJson && (
+              <div
+                className="absolute top-3 left-3 text-text-tertiary font-mono pointer-events-none"
+                style={{ fontSize: '13px', lineHeight: '1.4' }}
+              >
+                Paste left JSON here...
+              </div>
+            )}
+          </div>
           {error.left && (
             <p className="mt-1 text-xs text-accent-error">{error.left}</p>
           )}
@@ -334,15 +466,16 @@ export default function JsonDiff() {
 
         {/* Swap button */}
         <div className="flex items-center justify-center">
-          <button
-            onClick={handleSwap}
-            className="btn p-2 rounded-full"
-            title="Swap left and right"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-            </svg>
-          </button>
+          <Tooltip content="Swap left and right">
+            <button
+              onClick={handleSwap}
+              className="btn p-2 rounded-full"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              </svg>
+            </button>
+          </Tooltip>
         </div>
 
         {/* Right input */}
@@ -350,27 +483,84 @@ export default function JsonDiff() {
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-text-secondary">Right JSON</span>
             <div className="flex gap-1">
-              <button onClick={() => handlePaste('right')} className="btn text-xs px-2 py-1" title="Paste">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-              </button>
-              <button onClick={() => handleClear('right')} className="btn text-xs px-2 py-1" title="Clear">
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
+              <Tooltip content="Beautify">
+                <button onClick={() => handleBeautify('right')} className="btn text-xs px-2 py-1">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                  </svg>
+                </button>
+              </Tooltip>
+              <Tooltip content="Paste">
+                <button onClick={() => handlePaste('right')} className="btn text-xs px-2 py-1">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                </button>
+              </Tooltip>
+              <Tooltip content="Clear">
+                <button onClick={() => handleClear('right')} className="btn text-xs px-2 py-1">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </Tooltip>
             </div>
           </div>
-          <textarea
-            value={rightJson}
-            onChange={(e) => setRightJson(e.target.value)}
-            placeholder="Paste right JSON here..."
-            className={`h-32 w-full bg-dark-bg border rounded p-3 text-sm font-mono text-text-primary resize-none focus:outline-none focus:ring-1 ${
-              error.right ? 'border-accent-error focus:ring-accent-error' : 'border-dark-border focus:ring-accent-primary'
+          <div
+            ref={rightContainerRef}
+            className={`h-32 relative rounded border focus-within:ring-1 bg-dark-bg overflow-hidden ${
+              error.right ? 'border-accent-error focus-within:ring-accent-error' : 'border-dark-border focus-within:ring-accent-primary'
             }`}
-            spellCheck={false}
-          />
+          >
+            {/* Syntax highlighted background */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+              <SyntaxHighlighter
+                language="json"
+                style={darkCodeTheme}
+                customStyle={{
+                  margin: 0,
+                  padding: '12px',
+                  background: 'transparent',
+                  height: '100%',
+                  overflow: 'hidden',
+                }}
+                codeTagProps={{
+                  style: {
+                    fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
+                    fontSize: '13px',
+                    lineHeight: '1.4',
+                  }
+                }}
+              >
+                {rightJson || ' '}
+              </SyntaxHighlighter>
+            </div>
+            {/* Transparent textarea for editing */}
+            <textarea
+              value={rightJson}
+              onChange={(e) => setRightJson(e.target.value)}
+              onScroll={(e) => handleScroll(e, rightContainerRef)}
+              onKeyDown={(e) => handleKeyDown(e, 'right')}
+              className="relative w-full h-full bg-transparent text-transparent caret-white resize-none font-mono outline-none"
+              style={{
+                padding: '12px',
+                fontSize: '13px',
+                lineHeight: '1.4',
+                fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
+                caretColor: '#58a6ff',
+              }}
+              spellCheck={false}
+            />
+            {/* Placeholder when empty */}
+            {!rightJson && (
+              <div
+                className="absolute top-3 left-3 text-text-tertiary font-mono pointer-events-none"
+                style={{ fontSize: '13px', lineHeight: '1.4' }}
+              >
+                Paste right JSON here...
+              </div>
+            )}
+          </div>
           {error.right && (
             <p className="mt-1 text-xs text-accent-error">{error.right}</p>
           )}
