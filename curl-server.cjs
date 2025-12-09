@@ -1,5 +1,5 @@
 const http = require('http');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const url = require('url');
 
 const PORT = 3001;
@@ -27,27 +27,26 @@ const server = http.createServer((req, res) => {
         const { method, url: targetUrl, headers, body: requestBody } = JSON.parse(body);
 
         // Build cURL command
-        const curlParts = ['curl', '-s', '-w', '"\\n%{http_code}"', '-X', method];
+        const curlArgs = ['-s', '-w', '\\n%{http_code}', '-X', method];
 
         // Add headers
         if (headers) {
           Object.entries(headers).forEach(([key, value]) => {
-            curlParts.push('-H', `'${key}: ${value}'`);
+            curlArgs.push('-H', `${key}: ${value}`);
           });
         }
 
         // Add body for POST/PUT/PATCH
         if (requestBody && ['POST', 'PUT', 'PATCH'].includes(method)) {
-          curlParts.push('-d', `'${requestBody.replace(/'/g, "'\\''")}'`);
+          curlArgs.push('-d', requestBody);
         }
 
         // Add URL
-        curlParts.push(`'${targetUrl}'`);
+        curlArgs.push(targetUrl);
 
-        const curlCommand = curlParts.join(' ');
         const startTime = Date.now();
 
-        exec(curlCommand, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
+        execFile('curl', curlArgs, { maxBuffer: 10 * 1024 * 1024 }, (error, stdout, stderr) => {
           const duration = Date.now() - startTime;
 
           if (error && !stdout) {
