@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { CorsSettings } from '../types';
+import Tooltip from './Tooltip';
 
 interface CorsSettingsProps {
   settings: CorsSettings;
@@ -38,20 +39,22 @@ const CorsSettingsComponent: React.FC<CorsSettingsProps> = ({ settings, onChange
           />
         )}
 
-        <button
-          onClick={() => setIsExpanded(!isExpanded)}
-          className="text-xs text-accent-warning hover:underline flex items-center gap-1"
-        >
-          <svg
-            className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+        <Tooltip content={isExpanded ? 'Hide help' : 'Show help'}>
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="text-xs text-accent-warning hover:underline flex items-center gap-1"
           >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-          {isExpanded ? 'Less' : 'Help'}
-        </button>
+            <svg
+              className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+            {isExpanded ? 'Less' : 'Help'}
+          </button>
+        </Tooltip>
       </div>
 
       {isExpanded && (
@@ -60,24 +63,30 @@ const CorsSettingsComponent: React.FC<CorsSettingsProps> = ({ settings, onChange
 
           <div className="flex gap-2 flex-wrap">
             <span className="text-text-tertiary">Quick options:</span>
-            <button
-              onClick={() => onChange({ ...settings, proxyUrl: 'https://corsproxy.io/?' })}
-              className="text-accent-primary hover:underline"
-            >
-              corsproxy.io
-            </button>
-            <button
-              onClick={() => onChange({ ...settings, proxyUrl: 'https://api.allorigins.win/raw?url=' })}
-              className="text-accent-primary hover:underline"
-            >
-              allorigins.win
-            </button>
-            <button
-              onClick={() => onChange({ ...settings, proxyUrl: 'http://localhost:8080/' })}
-              className="text-accent-primary hover:underline"
-            >
-              localhost:8080
-            </button>
+            <Tooltip content="Use corsproxy.io proxy">
+              <button
+                onClick={() => onChange({ ...settings, proxyUrl: 'https://corsproxy.io/?' })}
+                className="text-accent-primary hover:underline"
+              >
+                corsproxy.io
+              </button>
+            </Tooltip>
+            <Tooltip content="Use allorigins.win proxy">
+              <button
+                onClick={() => onChange({ ...settings, proxyUrl: 'https://api.allorigins.win/raw?url=' })}
+                className="text-accent-primary hover:underline"
+              >
+                allorigins.win
+              </button>
+            </Tooltip>
+            <Tooltip content="Use localhost proxy">
+              <button
+                onClick={() => onChange({ ...settings, proxyUrl: 'http://localhost:8080/' })}
+                className="text-accent-primary hover:underline"
+              >
+                localhost:8080
+              </button>
+            </Tooltip>
           </div>
 
           <div className="flex items-start gap-2 p-2 bg-accent-warning/10 rounded-md">

@@ -12,6 +12,7 @@ import UpdateNotification from './components/UpdateNotification';
 import ConsolePanel from './components/ConsolePanel';
 import SettingsPage from './components/SettingsPage';
 import ToolsPage from './components/ToolsPage';
+import Tooltip from './components/Tooltip';
 import type { Environment, EnvironmentVariable, ApiRequest, ApiResponse, ComparisonResult, Folder, SavedRequest, RequestCollection, OpenTab, PanelSizes, AppConfig, HistoryEntry, HistorySettings, ProxySettings, ConsoleLogEntry } from './types';
 
 const STORAGE_KEY = 'dual-env-tester-config';
@@ -1398,6 +1399,7 @@ function App() {
                 <button
                   onClick={handleExportConfig}
                   className="btn text-xs"
+                  title="Export configuration"
                 >
                   Export
                 </button>
@@ -1405,11 +1407,12 @@ function App() {
                   <button
                     onClick={() => handleImportConfig()}
                     className="btn text-xs"
+                    title="Import configuration"
                   >
                     Import
                   </button>
                 ) : (
-                  <label className="btn text-xs cursor-pointer">
+                  <label className="btn text-xs cursor-pointer" title="Import configuration">
                     Import
                     <input
                       type="file"
@@ -1425,19 +1428,21 @@ function App() {
             <div className="space-y-2">
               {/* Environment Configuration Disclosure */}
               <div>
-                <button
-                  onClick={() => setShowEnvConfig(!showEnvConfig)}
-                  className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-accent-primary mb-1.5 transition-colors"
-                >
-                  <svg
-                    className={`w-3 h-3 transition-transform duration-200 ${showEnvConfig ? 'rotate-90' : ''}`}
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
+                <Tooltip content={showEnvConfig ? 'Collapse environments' : 'Expand environments'}>
+                  <button
+                    onClick={() => setShowEnvConfig(!showEnvConfig)}
+                    className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-accent-primary mb-1.5 transition-colors"
                   >
-                    <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                  </svg>
-                  <span className="font-medium">Environments</span>
-                </button>
+                    <svg
+                      className={`w-3 h-3 transition-transform duration-200 ${showEnvConfig ? 'rotate-90' : ''}`}
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    </svg>
+                    <span className="font-medium">Environments</span>
+                  </button>
+                </Tooltip>
                 {showEnvConfig && (
                   <div className="card p-3">
                     <EnvironmentManager

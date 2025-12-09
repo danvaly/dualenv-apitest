@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import JsonViewer from './tools/JsonViewer';
 import JsonDiff from './tools/JsonDiff';
+import Tooltip from './Tooltip';
 
 interface ToolsPageProps {
   isOpen: boolean;
@@ -11,6 +12,7 @@ type ToolTab = 'json-viewer' | 'json-diff';
 
 export default function ToolsPage({ isOpen, onClose }: ToolsPageProps) {
   const [activeTab, setActiveTab] = useState<ToolTab>('json-viewer');
+  const [isMaximized, setIsMaximized] = useState(false);
 
   if (!isOpen) return null;
 
@@ -37,7 +39,11 @@ export default function ToolsPage({ isOpen, onClose }: ToolsPageProps) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-dark-bg-secondary border border-dark-border rounded-lg shadow-xl w-[90vw] max-w-6xl h-[85vh] flex flex-col">
+      <div className={`bg-dark-bg-secondary border border-dark-border shadow-xl flex flex-col transition-all duration-200 ${
+        isMaximized
+          ? 'w-screen h-screen rounded-none'
+          : 'w-[90vw] max-w-6xl h-[85vh] rounded-lg'
+      }`}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-dark-border">
           <div className="flex items-center gap-3">
@@ -46,14 +52,34 @@ export default function ToolsPage({ isOpen, onClose }: ToolsPageProps) {
             </svg>
             <h2 className="text-lg font-semibold text-text-primary">Tools</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded hover:bg-dark-bg-tertiary transition-colors text-text-secondary hover:text-text-primary"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-1">
+            <Tooltip content={isMaximized ? 'Restore' : 'Maximize'}>
+              <button
+                onClick={() => setIsMaximized(!isMaximized)}
+                className="p-1.5 rounded hover:bg-dark-bg-tertiary transition-colors text-text-secondary hover:text-text-primary"
+              >
+                {isMaximized ? (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 9V5a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2h-4M15 15H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+                  </svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                  </svg>
+                )}
+              </button>
+            </Tooltip>
+            <Tooltip content="Close">
+              <button
+                onClick={onClose}
+                className="p-1.5 rounded hover:bg-dark-bg-tertiary transition-colors text-text-secondary hover:text-text-primary"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </Tooltip>
+          </div>
         </div>
 
         <div className="flex flex-1 overflow-hidden">
