@@ -1,0 +1,183 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background-color: #0d1117;
+    color: #e6edf3;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', monospace;
+  }
+
+  /* Custom scrollbars */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #30363d;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #484f58;
+  }
+
+  /* Selection */
+  ::selection {
+    background-color: #58a6ff;
+    color: white;
+  }
+}
+
+@layer components {
+  /* Button styles */
+  .btn {
+    @apply px-2 py-1 text-xs font-medium rounded transition-all duration-150;
+    background-color: #21262d;
+    border: 1px solid rgba(48, 54, 61, 0.4);
+    color: #e6edf3;
+  }
+
+  .btn:hover {
+    background-color: #30363d;
+    border-color: rgba(72, 79, 88, 0.5);
+  }
+
+  .btn:active {
+    transform: scale(0.98);
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    @apply px-2 py-1 text-xs font-medium rounded transition-all duration-150;
+    background-color: #238636;
+    border: 1px solid rgba(46, 160, 67, 0.4);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background-color: #2ea043;
+  }
+
+  .btn-primary:active {
+    transform: scale(0.98);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-accent {
+    @apply px-2 py-1 text-xs font-medium rounded transition-all duration-150;
+    background-color: #1f6feb;
+    border: 1px solid rgba(56, 139, 253, 0.4);
+    color: white;
+  }
+
+  .btn-accent:hover {
+    background-color: #388bfd;
+  }
+
+  .btn-accent:active {
+    transform: scale(0.98);
+  }
+
+  .btn-accent:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Input styles */
+  .input {
+    @apply w-full px-2 py-1 text-xs rounded transition-all duration-150;
+    background-color: #0d1117;
+    border: 1px solid rgba(48, 54, 61, 0.4);
+    color: #e6edf3;
+  }
+
+  .input::placeholder {
+    color: #6e7681;
+  }
+
+  .input:focus {
+    outline: none;
+    border-color: #58a6ff;
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  }
+
+  /* Card styles */
+  .card {
+    background-color: #161b22;
+    border-radius: 6px;
+    border: 1px solid rgba(48, 54, 61, 0.4);
+  }
+
+  /* Sidebar styles */
+  .sidebar {
+    background-color: #0d1117;
+    border-right: 1px solid #21262d;
+  }
+
+  /* Badge styles */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold;
+  }
+
+  /* Method badge colors */
+  .method-get {
+    background-color: rgba(63, 185, 80, 0.15);
+    color: #3fb950;
+  }
+
+  .method-post {
+    background-color: rgba(88, 166, 255, 0.15);
+    color: #58a6ff;
+  }
+
+  .method-put {
+    background-color: rgba(210, 153, 34, 0.15);
+    color: #d29922;
+  }
+
+  .method-patch {
+    background-color: rgba(219, 109, 40, 0.15);
+    color: #db6d28;
+  }
+
+  .method-delete {
+    background-color: rgba(248, 81, 73, 0.15);
+    color: #f85149;
+  }
+
+  /* Slide-in animation for panels */
+  .animate-slide-in-right {
+    animation: slideInRight 0.2s ease-out forwards;
+  }
+
+  @keyframes slideInRight {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+}
