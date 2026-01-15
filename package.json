@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "cors-anywhere": "^0.4.4",
-    "diff": "^8.0.2",
+    "diff": "^8.0.3",
     "electron-updater": "^6.6.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
