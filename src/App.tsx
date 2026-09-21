@@ -24,7 +24,7 @@ const DEFAULT_PANEL_SIZES: PanelSizes = {
 };
 
 const createDefaultTab = (): OpenTab => ({
-  id: `tab-${Date.now()}`,
+  id: `tab-${crypto.randomUUID()}`,
   title: 'New Request',
   request: {
     method: 'GET',
@@ -114,8 +114,9 @@ function App() {
   const [configLoaded, setConfigLoaded] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mainContentRef = useRef<HTMLDivElement>(null);
+  const requestAbortRef = useRef<AbortController | null>(null);
 
-  const [showEnvConfig, setShowEnvConfig] = useState(true);
+  const [showEnvConfig, setShowEnvConfig] = useState(false);
   const [curlModal, setCurlModal] = useState<{ isOpen: boolean; curlCommand: string; envName: string }>({
     isOpen: false,
     curlCommand: '',
@@ -203,6 +204,11 @@ function App() {
           if (!loadedConfig.proxySettings) {
             loadedConfig.proxySettings = DEFAULT_PROXY_SETTINGS;
           }
+          loadedConfig.openTabs = loadedConfig.openTabs.map(tab => ({
+            ...tab,
+            selectedEnv1Id: tab.selectedEnv1Id === undefined ? loadedConfig!.selectedEnv1Id : tab.selectedEnv1Id,
+            selectedEnv2Id: tab.selectedEnv2Id === undefined ? loadedConfig!.selectedEnv2Id : tab.selectedEnv2Id,
+          }));
           setConfig(loadedConfig);
         } else {
           setConfig(getDefaultConfig());
@@ -263,10 +269,10 @@ function App() {
   }, []);
 
   // Update config and trigger save
-  const updateConfig = useCallback((updates: Partial<AppConfig>) => {
+  const updateConfig = useCallback((updates: Partial<AppConfig> | ((current: AppConfig) => Partial<AppConfig>)) => {
     setConfig(prev => {
       if (!prev) return prev;
-      const newConfig = { ...prev, ...updates };
+      const newConfig = { ...prev, ...(typeof updates === 'function' ? updates(prev) : updates) };
       saveConfig(newConfig);
       return newConfig;
     });
@@ -274,8 +280,11 @@ function App() {
 
   // Derived state
   const environments = config?.environments || [];
-  const selectedEnv1 = environments.find(e => e.id === config?.selectedEnv1Id) || null;
-  const selectedEnv2 = environments.find(e => e.id === config?.selectedEnv2Id) || null;
+  const connectionTab = config?.openTabs.find(t => t.id === config.activeTabId) || config?.openTabs[0];
+  const selectedEnv1Id = connectionTab?.selectedEnv1Id === undefined ? config?.selectedEnv1Id : connectionTab.selectedEnv1Id;
+  const selectedEnv2Id = connectionTab?.selectedEnv2Id === undefined ? config?.selectedEnv2Id : connectionTab.selectedEnv2Id;
+  const selectedEnv1 = environments.find(e => e.id === selectedEnv1Id) || null;
+  const selectedEnv2 = environments.find(e => e.id === selectedEnv2Id) || null;
   const env1Name = selectedEnv1?.name || 'Environment 1';
   const env2Name = selectedEnv2?.name || 'Environment 2';
   const corsSettings = config?.corsSettings || getDefaultConfig().corsSettings;
@@ -297,6 +306,18 @@ function App() {
   const isSingleMode = (selectedEnv1 !== null || selectedEnv2 !== null) && !isDualMode;
   const singleEnv = isSingleMode ? (selectedEnv1 || selectedEnv2) : null;
   const singleEnvIndex = isSingleMode ? (selectedEnv1 ? 1 : 2) : null;
+
+  const selectConnection = (index: 1 | 2, id: string | null) => {
+    if (!activeTab) return;
+    updateConfig(prev => ({
+      openTabs: prev.openTabs.map(tab => tab.id === activeTab.id ? {
+        ...tab,
+        selectedEnv1Id: index === 1 ? id : tab.selectedEnv1Id === undefined ? prev.selectedEnv1Id : tab.selectedEnv1Id,
+        selectedEnv2Id: index === 2 ? id : tab.selectedEnv2Id === undefined ? prev.selectedEnv2Id : tab.selectedEnv2Id,
+        comparison: { env1: null, env2: null, loading: false, loading1: false, loading2: false },
+      } : tab),
+    }));
+  };
 
   // Panel resize handlers
   const handleSidebarResize = useCallback((delta: number) => {
@@ -347,7 +368,7 @@ function App() {
 
   // Tab management
   const handleNewTab = () => {
-    const newTab = createDefaultTab();
+    const newTab = { ...createDefaultTab(), selectedEnv1Id: selectedEnv1Id || null, selectedEnv2Id: selectedEnv2Id || null };
     updateConfig({
       openTabs: [...openTabs, newTab],
       activeTabId: newTab.id,
@@ -358,26 +379,19 @@ function App() {
     updateConfig({ activeTabId: tabId });
   };
 
-  const handleCloseTab = (tabId: string) => {
-    const newTabs = openTabs.filter(t => t.id !== tabId);
-
-    if (newTabs.length === 0) {
-      const newTab = createDefaultTab();
-      updateConfig({
-        openTabs: [newTab],
-        activeTabId: newTab.id,
-      });
-    } else if (activeTabId === tabId) {
-      const closedIndex = openTabs.findIndex(t => t.id === tabId);
-      const newActiveIndex = Math.min(closedIndex, newTabs.length - 1);
-      updateConfig({
-        openTabs: newTabs,
-        activeTabId: newTabs[newActiveIndex].id,
-      });
-    } else {
-      updateConfig({ openTabs: newTabs });
-    }
-  };
+  const handleCloseTab = useCallback((tabId: string) => {
+    updateConfig(prev => {
+      const remaining = prev.openTabs.filter(t => t.id !== tabId);
+      const nextTabs = remaining.length ? remaining : [createDefaultTab()];
+      const closedIndex = prev.openTabs.findIndex(t => t.id === tabId);
+      return {
+        openTabs: nextTabs,
+        activeTabId: prev.activeTabId === tabId
+          ? nextTabs[Math.min(Math.max(0, closedIndex), nextTabs.length - 1)].id
+          : prev.activeTabId,
+      };
+    });
+  }, [updateConfig]);
 
   const updateActiveTab = (updates: Partial<OpenTab>) => {
     if (!activeTab) return;
@@ -393,12 +407,12 @@ function App() {
 
     let isDirty = activeTab.isDirty;
     if (activeTab.savedRequestId) {
-      const savedRequest = activeCollection.requests.find(r => r.id === activeTab.savedRequestId);
+      const savedRequest = collections.flatMap(c => c.requests).find(r => r.id === activeTab.savedRequestId);
       if (savedRequest) {
         isDirty = JSON.stringify(request) !== JSON.stringify(savedRequest.request);
       }
     } else {
-      isDirty = request.endpoint !== '' || request.body !== '';
+      isDirty = request.endpoint !== '' || !!request.body || request.method !== 'GET' || Object.keys(request.headers || {}).length > 0;
     }
 
     const title = request.endpoint
@@ -409,19 +423,19 @@ function App() {
       request,
       isDirty,
       title: activeTab.savedRequestId
-        ? activeCollection.requests.find(r => r.id === activeTab.savedRequestId)?.name || title
+        ? collections.flatMap(c => c.requests).find(r => r.id === activeTab.savedRequestId)?.name || title
         : title,
     });
   };
 
-  const updateActiveTabComparison = (comparison: ComparisonResult) => {
+  const updateActiveTabComparison = (comparison: Partial<ComparisonResult>) => {
     if (!activeTab) return;
     setConfig(prev => {
       if (!prev) return prev;
       return {
         ...prev,
         openTabs: prev.openTabs.map(t =>
-          t.id === activeTab.id ? { ...t, comparison } : t
+          t.id === activeTab.id ? { ...t, comparison: { ...t.comparison, ...comparison } } : t
         ),
       };
     });
@@ -498,15 +512,15 @@ function App() {
     const parts = [`curl -X ${request.method}`];
 
     const allHeaders = { ...substituted.headers };
-    if (substituted.body && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
-      allHeaders['Content-Type'] = allHeaders['Content-Type'] || 'application/json';
+    if (substituted.body && request.bodyType !== 'none' && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
+      allHeaders['Content-Type'] = allHeaders['Content-Type'] || (request.bodyType === 'text' ? 'text/plain' : request.bodyType === 'xml' ? 'application/xml' : request.bodyType === 'yaml' ? 'application/yaml' : 'application/json');
     }
 
     Object.entries(allHeaders).forEach(([key, value]) => {
       parts.push(`-H '${key}: ${value}'`);
     });
 
-    if (substituted.body && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
+    if (substituted.body && request.bodyType !== 'none' && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
       parts.push(`-d '${substituted.body.replace(/'/g, "'\\''")}'`);
     }
 
@@ -538,7 +552,7 @@ function App() {
       createdAt: Date.now(),
     };
     updateActiveCollection({
-      folders: [...activeCollection.folders, newFolder],
+      folders: [...activeCollection.folders.map(f => f.id === parentId ? { ...f, isExpanded: true } : f), newFolder],
     });
   };
 
@@ -560,10 +574,18 @@ function App() {
 
     const folderIdsToDelete = getFolderIdsToDelete(folderId);
 
-    updateActiveCollection({
-      folders: activeCollection.folders.filter(f => !folderIdsToDelete.includes(f.id)),
-      requests: activeCollection.requests.filter(r => r.folderId === null || !folderIdsToDelete.includes(r.folderId)),
-    });
+    const deletedRequestIds = new Set(activeCollection.requests
+      .filter(r => r.folderId !== null && folderIdsToDelete.includes(r.folderId)).map(r => r.id));
+    updateConfig(prev => ({
+      collections: prev.collections.map(c => c.id === activeCollection.id ? {
+        ...c,
+        folders: c.folders.filter(f => !folderIdsToDelete.includes(f.id)),
+        requests: c.requests.filter(r => !deletedRequestIds.has(r.id)),
+        updatedAt: Date.now(),
+      } : c),
+      openTabs: prev.openTabs.map(tab => tab.savedRequestId && deletedRequestIds.has(tab.savedRequestId)
+        ? { ...tab, savedRequestId: null, isDirty: true } : tab),
+    }));
   };
 
   const handleToggleFolder = (folderId: string) => {
@@ -654,30 +676,62 @@ function App() {
     });
   };
 
+  const handleCreateRequest = (name: string, folderId: string | null) => {
+    if (!activeCollectionId) return;
+    const request: ApiRequest = { method: 'GET', endpoint: '', body: '', headers: {} };
+    const saved: SavedRequest = {
+      id: `request-${crypto.randomUUID()}`, name, folderId, request,
+      createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    const tab: OpenTab = {
+      ...createDefaultTab(), title: name, request, savedRequestId: saved.id,
+      selectedEnv1Id: selectedEnv1Id || null, selectedEnv2Id: selectedEnv2Id || null,
+    };
+    updateConfig(prev => ({
+      collections: prev.collections.map(c => c.id === activeCollectionId ? {
+        ...c, requests: [...c.requests, saved], updatedAt: Date.now(),
+        folders: c.folders.map(f => f.id === folderId ? { ...f, isExpanded: true } : f),
+      } : c),
+      openTabs: [...prev.openTabs, tab], activeTabId: tab.id,
+    }));
+  };
+
+  const handleDuplicateRequest = (requestId: string) => {
+    if (!activeCollectionId) return;
+    updateConfig(prev => ({
+      collections: prev.collections.map(c => {
+        if (c.id !== activeCollectionId) return c;
+        const source = c.requests.find(r => r.id === requestId);
+        if (!source) return c;
+        const copy: SavedRequest = {
+          ...source, id: `request-${crypto.randomUUID()}`, name: `${source.name} (copy)`,
+          request: { ...source.request, headers: { ...source.request.headers } },
+          createdAt: Date.now(), updatedAt: Date.now(),
+        };
+        const requests = [...c.requests];
+        requests.splice(requests.findIndex(r => r.id === requestId) + 1, 0, copy);
+        return { ...c, requests, updatedAt: Date.now() };
+      }),
+    }));
+  };
+
   // Request management handlers
   const handleSaveRequest = (name: string, folderId: string | null) => {
-    if (!activeTab || !activeCollection) return;
-
-    const savedRequest: SavedRequest = {
-      id: `request-${Date.now()}`,
-      name,
-      request: { ...activeTab.request },
-      folderId,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    updateConfig({
-      collections: collections.map(c =>
-        c.id === activeCollection.id
-          ? { ...c, requests: [...c.requests, savedRequest], updatedAt: Date.now() }
-          : c
-      ),
-      openTabs: openTabs.map(t =>
-        t.id === activeTab.id
-          ? { ...t, savedRequestId: savedRequest.id, title: name, isDirty: false }
-          : t
-      ),
+    const sourceId = pendingCloseTabId || activeTab?.id;
+    if (!sourceId || !activeCollection) return;
+    updateConfig(prev => {
+      const source = prev.openTabs.find(t => t.id === sourceId);
+      if (!source) return {};
+      const savedRequest: SavedRequest = {
+        id: `request-${crypto.randomUUID()}`, name, request: { ...source.request },
+        folderId, createdAt: Date.now(), updatedAt: Date.now(),
+      };
+      return {
+        collections: prev.collections.map(c => c.id === activeCollection.id
+          ? { ...c, requests: [...c.requests, savedRequest], updatedAt: Date.now() } : c),
+        openTabs: prev.openTabs.map(t => t.id === sourceId
+          ? { ...t, savedRequestId: savedRequest.id, title: name, isDirty: false } : t),
+      };
     });
   };
 
@@ -701,28 +755,23 @@ function App() {
     });
   };
 
-  const handleSaveCurrentRequest = useCallback(() => {
-    if (!activeTab || !activeTab.savedRequestId || !activeCollection) return;
-
-    updateConfig({
-      collections: collections.map(c =>
-        c.id === activeCollection.id
-          ? {
-              ...c,
-              requests: c.requests.map(r =>
-                r.id === activeTab.savedRequestId
-                  ? { ...r, request: { ...activeTab.request }, updatedAt: Date.now() }
-                  : r
-              ),
-              updatedAt: Date.now(),
-            }
-          : c
-      ),
-      openTabs: openTabs.map(t =>
-        t.id === activeTab.id ? { ...t, isDirty: false } : t
-      ),
+  const saveExistingTab = useCallback((tabId: string) => {
+    updateConfig(prev => {
+      const tab = prev.openTabs.find(t => t.id === tabId);
+      if (!tab?.savedRequestId) return {};
+      return {
+        collections: prev.collections.map(c => c.requests.some(r => r.id === tab.savedRequestId)
+          ? { ...c, updatedAt: Date.now(), requests: c.requests.map(r =>
+              r.id === tab.savedRequestId ? { ...r, request: { ...tab.request }, updatedAt: Date.now() } : r) }
+          : c),
+        openTabs: prev.openTabs.map(t => t.id === tabId ? { ...t, isDirty: false } : t),
+      };
     });
-  }, [activeTab, activeCollection, collections, openTabs, updateConfig]);
+  }, [updateConfig]);
+
+  const handleSaveCurrentRequest = useCallback(() => {
+    if (activeTab) saveExistingTab(activeTab.id);
+  }, [activeTab, saveExistingTab]);
 
   // Keyboard shortcut handler (Cmd/Ctrl+S to save)
   useEffect(() => {
@@ -753,7 +802,7 @@ function App() {
     } else {
       handleCloseTab(tabId);
     }
-  }, [openTabs]);
+  }, [openTabs, handleCloseTab]);
 
   // Confirm close tab (discard changes)
   const confirmCloseTab = useCallback(() => {
@@ -761,7 +810,7 @@ function App() {
       handleCloseTab(pendingCloseTabId);
       setPendingCloseTabId(null);
     }
-  }, [pendingCloseTabId]);
+  }, [pendingCloseTabId, handleCloseTab]);
 
   // Cancel close tab
   const cancelCloseTab = useCallback(() => {
@@ -774,9 +823,7 @@ function App() {
       const tab = openTabs.find((t: OpenTab) => t.id === pendingCloseTabId);
       if (tab?.savedRequestId) {
         // Save existing request
-        if (activeTab && activeTab.id === pendingCloseTabId) {
-          handleSaveCurrentRequest();
-        }
+        saveExistingTab(pendingCloseTabId);
         handleCloseTab(pendingCloseTabId);
         setPendingCloseTabId(null);
       } else {
@@ -784,7 +831,7 @@ function App() {
         setShowSaveDialog(true);
       }
     }
-  }, [pendingCloseTabId, openTabs, activeTab, handleSaveCurrentRequest]);
+  }, [pendingCloseTabId, openTabs, saveExistingTab, handleCloseTab]);
 
   const handleDeleteRequest = (requestId: string) => {
     if (!activeCollection) return;
@@ -851,9 +898,8 @@ function App() {
       timestamp: Date.now(),
     };
 
-    const newHistory = [newEntry, ...history].slice(0, historySettings.maxEntries);
-    updateConfig({ history: newHistory });
-  }, [history, historySettings, updateConfig]);
+    updateConfig(prev => ({ history: [newEntry, ...prev.history].slice(0, prev.historySettings.maxEntries) }));
+  }, [historySettings, updateConfig]);
 
   const handleDeleteHistoryEntry = useCallback((entryId: string) => {
     updateConfig({ history: history.filter((e: HistoryEntry) => e.id !== entryId) });
@@ -890,7 +936,9 @@ function App() {
       : 'From History';
 
     const newTab: OpenTab = {
-      id: `tab-${Date.now()}`,
+      id: `tab-${crypto.randomUUID()}`,
+      selectedEnv1Id: selectedEnv1Id || null,
+      selectedEnv2Id: selectedEnv2Id || null,
       title,
       request: { ...request },
       savedRequestId: null,
@@ -909,7 +957,7 @@ function App() {
       activeTabId: newTab.id,
     });
     setShowHistoryPanel(false);
-  }, [openTabs, updateConfig]);
+  }, [openTabs, updateConfig, selectedEnv1Id, selectedEnv2Id]);
 
   const handleSelectRequest = (apiRequest: ApiRequest, requestId: string) => {
     if (!activeCollection) return;
@@ -923,7 +971,9 @@ function App() {
     const title = savedRequest?.name || 'Request';
 
     const newTab: OpenTab = {
-      id: `tab-${Date.now()}`,
+      id: `tab-${crypto.randomUUID()}`,
+      selectedEnv1Id: selectedEnv1Id || null,
+      selectedEnv2Id: selectedEnv2Id || null,
       title,
       request: apiRequest,
       savedRequestId: requestId,
@@ -943,7 +993,7 @@ function App() {
     });
   };
 
-  const sendRequestViaFetch = async (request: ApiRequest, env: Environment | null): Promise<ApiResponse> => {
+  const sendRequestViaFetch = async (request: ApiRequest, env: Environment | null, signal?: AbortSignal): Promise<ApiResponse> => {
     const startTime = Date.now();
     const substituted = getSubstitutedRequest(request, env);
     let url = substituted.endpoint;
@@ -960,8 +1010,8 @@ function App() {
         ...substituted.headers,
       };
 
-      if (substituted.body && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
-        headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+      if (substituted.body && request.bodyType !== 'none' && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
+        headers['Content-Type'] = headers['Content-Type'] || (request.bodyType === 'text' ? 'text/plain' : request.bodyType === 'xml' ? 'application/xml' : request.bodyType === 'yaml' ? 'application/yaml' : 'application/json');
       }
 
       // Log request headers
@@ -976,9 +1026,10 @@ function App() {
       const response = await fetch(url, {
         method: request.method,
         headers,
-        body: substituted.body && ['POST', 'PUT', 'PATCH'].includes(request.method)
+        body: substituted.body && request.bodyType !== 'none' && ['POST', 'PUT', 'PATCH'].includes(request.method)
           ? substituted.body
           : undefined,
+        signal,
       });
 
       const duration = Date.now() - startTime;
@@ -1016,7 +1067,7 @@ function App() {
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      const errorMessage = signal?.aborted ? 'Request cancelled' : error instanceof Error ? error.message : 'Unknown error occurred';
       addConsoleLog('error', `Request failed: ${errorMessage}`);
       return {
         status: 0,
@@ -1030,17 +1081,18 @@ function App() {
     }
   };
 
-  const sendRequestViaCurl = async (request: ApiRequest, env: Environment | null): Promise<ApiResponse> => {
+  const sendRequestViaCurl = async (request: ApiRequest, env: Environment | null, signal?: AbortSignal): Promise<ApiResponse> => {
     const startTime = Date.now();
     const substituted = getSubstitutedRequest(request, env);
+    if (signal?.aborted) throw new DOMException('Request cancelled', 'AbortError');
     const url = substituted.endpoint;
 
     const headers: Record<string, string> = {
       ...substituted.headers,
     };
 
-    if (substituted.body && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
-      headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+    if (substituted.body && request.bodyType !== 'none' && ['POST', 'PUT', 'PATCH'].includes(request.method)) {
+      headers['Content-Type'] = headers['Content-Type'] || (request.bodyType === 'text' ? 'text/plain' : request.bodyType === 'xml' ? 'application/xml' : request.bodyType === 'yaml' ? 'application/yaml' : 'application/json');
     }
 
     if (window.electronAPI?.isElectron) {
@@ -1049,7 +1101,7 @@ function App() {
           method: request.method,
           url,
           headers,
-          body: substituted.body,
+          body: request.bodyType === 'none' ? undefined : substituted.body,
           proxySettings: proxySettings,
         });
 
@@ -1105,7 +1157,7 @@ function App() {
           method: request.method,
           url,
           headers,
-          body: substituted.body,
+          body: request.bodyType === 'none' ? undefined : substituted.body,
         }),
       });
 
@@ -1145,15 +1197,18 @@ function App() {
     }
   };
 
-  const sendRequest = async (request: ApiRequest, env: Environment | null): Promise<ApiResponse> => {
+  const sendRequest = async (request: ApiRequest, env: Environment | null, signal?: AbortSignal): Promise<ApiResponse> => {
     if (requestSettings.mode === 'curl') {
-      return sendRequestViaCurl(request, env);
+      return sendRequestViaCurl(request, env, signal);
     }
-    return sendRequestViaFetch(request, env);
+    return sendRequestViaFetch(request, env, signal);
   };
 
   const handleSendRequests = async () => {
     if (!activeTab) return;
+    requestAbortRef.current?.abort();
+    const controller = new AbortController();
+    requestAbortRef.current = controller;
 
     // Single environment mode - only send one request
     if (isSingleMode && singleEnv) {
@@ -1168,7 +1223,11 @@ function App() {
       });
 
       try {
-        const response = await sendRequest(activeTab.request, singleEnv);
+        const response = await sendRequest(activeTab.request, singleEnv, controller.signal);
+        if (controller.signal.aborted) {
+          if (requestAbortRef.current === controller) requestAbortRef.current = null;
+          return;
+        }
         updateActiveTabComparison({
           env1: isEnv1 ? response : null,
           env2: isEnv1 ? null : response,
@@ -1185,14 +1244,16 @@ function App() {
           isEnv1 ? null : singleEnv.name
         );
       } catch (error) {
-        console.error('Error sending request:', error);
+        if (!controller.signal.aborted) console.error('Error sending request:', error);
         updateActiveTabComparison({
-          ...activeTab.comparison,
+          env1: null,
+          env2: null,
           loading: false,
           loading1: false,
           loading2: false,
         });
       }
+      if (requestAbortRef.current === controller) requestAbortRef.current = null;
       return;
     }
 
@@ -1207,9 +1268,10 @@ function App() {
 
     try {
       const [response1, response2] = await Promise.all([
-        sendRequest(activeTab.request, selectedEnv1),
-        sendRequest(activeTab.request, selectedEnv2),
+        sendRequest(activeTab.request, selectedEnv1, controller.signal),
+        sendRequest(activeTab.request, selectedEnv2, controller.signal),
       ]);
+      if (controller.signal.aborted) return;
 
       updateActiveTabComparison({
         env1: response1,
@@ -1227,14 +1289,23 @@ function App() {
         selectedEnv2?.name || null
       );
     } catch (error) {
-      console.error('Error sending requests:', error);
+      if (!controller.signal.aborted) console.error('Error sending requests:', error);
       updateActiveTabComparison({
-        ...activeTab.comparison,
+        env1: null,
+        env2: null,
         loading: false,
         loading1: false,
         loading2: false,
       });
+    } finally {
+      if (requestAbortRef.current === controller) requestAbortRef.current = null;
     }
+  };
+
+  const handleCancelRequest = () => {
+    requestAbortRef.current?.abort();
+    requestAbortRef.current = null;
+    updateActiveTabComparison({ loading: false, loading1: false, loading2: false });
   };
 
   const handleRerunRequest = async (envIndex: 1 | 2) => {
@@ -1245,21 +1316,18 @@ function App() {
     const resultKey = envIndex === 1 ? 'env1' : 'env2';
 
     updateActiveTabComparison({
-      ...activeTab.comparison,
       [loadingKey]: true,
     });
 
     try {
       const response = await sendRequest(activeTab.request, env);
       updateActiveTabComparison({
-        ...activeTab.comparison,
         [resultKey]: response,
         [loadingKey]: false,
       });
     } catch (error) {
       console.error('Error sending request:', error);
       updateActiveTabComparison({
-        ...activeTab.comparison,
         [loadingKey]: false,
       });
     }
@@ -1276,6 +1344,10 @@ function App() {
     loading: false,
     loading1: false,
     loading2: false,
+  };
+  const resolvedUrls = {
+    env1: activeTab && selectedEnv1 ? getSubstitutedRequest(activeTab.request, selectedEnv1).endpoint : null,
+    env2: activeTab && selectedEnv2 ? getSubstitutedRequest(activeTab.request, selectedEnv2).endpoint : null,
   };
 
   // Only show diff panel in dual mode when both responses are available without errors
@@ -1304,6 +1376,8 @@ function App() {
           currentRequestId={activeTab?.savedRequestId || null}
           onSelectRequest={handleSelectRequest}
           onSaveRequest={handleSaveRequest}
+          onCreateRequest={handleCreateRequest}
+          onDuplicateRequest={handleDuplicateRequest}
           onUpdateRequest={handleUpdateRequest}
           onDeleteRequest={handleDeleteRequest}
           onCreateFolder={handleCreateFolder}
@@ -1440,20 +1514,21 @@ function App() {
                     >
                       <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
                     </svg>
-                    <span className="font-medium">Environments</span>
+                    <span className="font-medium">Connections for this tab</span>
+                    <span className="text-text-muted">{selectedEnv1?.name || 'None'} / {selectedEnv2?.name || 'None'}</span>
                   </button>
                 </Tooltip>
                 {showEnvConfig && (
-                  <div className="card p-3">
+                  <fieldset disabled={!!(activeTab?.comparison.loading || activeTab?.comparison.loading1 || activeTab?.comparison.loading2)} className="card p-3 disabled:opacity-60">
                     <EnvironmentManager
                       environments={environments}
-                      selectedEnv1Id={config.selectedEnv1Id}
-                      selectedEnv2Id={config.selectedEnv2Id}
+                      selectedEnv1Id={selectedEnv1?.id || null}
+                      selectedEnv2Id={selectedEnv2?.id || null}
                       onEnvironmentsChange={(envs) => updateConfig({ environments: envs })}
-                      onSelectEnv1={(id) => updateConfig({ selectedEnv1Id: id })}
-                      onSelectEnv2={(id) => updateConfig({ selectedEnv2Id: id })}
+                      onSelectEnv1={(id) => selectConnection(1, id)}
+                      onSelectEnv2={(id) => selectConnection(2, id)}
                     />
-                  </div>
+                  </fieldset>
                 )}
               </div>
 
@@ -1465,10 +1540,13 @@ function App() {
                       {/* Left column: Request Builder */}
                       <div style={{ width: `${panelSizes.requestPanelWidth}%` }} className="flex-shrink-0 overflow-auto">
                         <RequestBuilder
+                          key={activeTab.id}
                           request={activeTab.request}
                           onChange={updateActiveTabRequest}
                           onSend={handleSendRequests}
+                          onCancel={handleCancelRequest}
                           loading={currentComparison.loading}
+                          resolvedUrls={resolvedUrls}
                           onShowCurl={handleShowCurl}
                           isSingleMode={isSingleMode}
                           singleEnvIndex={singleEnvIndex}
@@ -1534,10 +1612,13 @@ function App() {
                   {/* Small/medium screen layout: stacked (no resize) */}
                   <div className="xl:hidden">
                     <RequestBuilder
+                      key={activeTab.id}
                       request={activeTab.request}
                       onChange={updateActiveTabRequest}
                       onSend={handleSendRequests}
+                      onCancel={handleCancelRequest}
                       loading={currentComparison.loading}
+                      resolvedUrls={resolvedUrls}
                       onShowCurl={handleShowCurl}
                       isSingleMode={isSingleMode}
                       singleEnvIndex={singleEnvIndex}
@@ -1587,7 +1668,7 @@ function App() {
       />
 
       {/* Unsaved Changes Confirmation Dialog */}
-      {pendingCloseTabId && (
+      {pendingCloseTabId && !showSaveDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="card p-4 max-w-md mx-4">
             <h3 className="text-lg font-semibold text-text-primary mb-2">Unsaved Changes</h3>

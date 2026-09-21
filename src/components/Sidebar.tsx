@@ -1,13 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import type { Folder, SavedRequest, ApiRequest, RequestCollection } from '../types';
 import CollectionManager from './CollectionManager';
 import Tooltip from './Tooltip';
+import ContextMenu, { type MenuAction } from './ContextMenu';
 
 interface SidebarProps {
   folders: Folder[];
   requests: SavedRequest[];
   currentRequestId: string | null;
   onSelectRequest: (request: ApiRequest, requestId: string) => void;
+  onCreateRequest: (name: string, folderId: string | null) => void;
+  onDuplicateRequest: (requestId: string) => void;
   onSaveRequest: (name: string, folderId: string | null) => void;
   onUpdateRequest: (requestId: string, name: string) => void;
   onDeleteRequest: (requestId: string) => void;
@@ -34,6 +37,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   currentRequestId,
   onSelectRequest,
   onSaveRequest,
+  onCreateRequest,
+  onDuplicateRequest,
   onUpdateRequest,
   onDeleteRequest,
   onCreateFolder,
@@ -51,6 +56,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   onDeleteCollection,
   onDuplicateCollection,
 }) => {
+  const [saveCurrentAs, setSaveCurrentAs] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; label: string; actions: MenuAction[] } | null>(null);
+  const menuTrigger = useRef<HTMLElement | null>(null);
+  const closeMenu = () => { setContextMenu(null); menuTrigger.current?.focus(); };
+
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null);
@@ -82,7 +93,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const handleSaveRequest = () => {
     if (newRequestName.trim()) {
-      onSaveRequest(newRequestName.trim(), newRequestFolderId);
+      (saveCurrentAs ? onSaveRequest : onCreateRequest)(newRequestName.trim(), newRequestFolderId);
       setNewRequestName('');
       setNewRequestFolderId(null);
       setIsCreatingRequest(false);
@@ -115,6 +126,54 @@ const Sidebar: React.FC<SidebarProps> = ({
     setEditingRequestName(request.name);
   };
 
+  const createFolder = (parentId: string | null) => {
+    setIsCreatingRequest(false);
+    setNewFolderName('');
+    setNewFolderParentId(parentId);
+    setIsCreatingFolder(true);
+  };
+  const createRequest = (folderId: string | null, saveCurrent = false) => {
+    setIsCreatingFolder(false);
+    setSaveCurrentAs(saveCurrent);
+    setNewRequestName('');
+    setNewRequestFolderId(folderId);
+    setIsCreatingRequest(true);
+  };
+  const showContextMenu = (event: React.MouseEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>, label: string, actions: MenuAction[]) => {
+    if ((event.target as HTMLElement).closest('input, select, textarea')) return;
+    if ('key' in event && event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    menuTrigger.current = event.currentTarget;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setContextMenu({ x: 'clientX' in event ? event.clientX : rect.left,
+      y: 'clientY' in event ? event.clientY : rect.bottom, label, actions });
+  };
+  const rootActions: MenuAction[] = [
+    { label: 'New request', onSelect: () => createRequest(null) },
+    { label: 'New folder', onSelect: () => createFolder(null) },
+    { label: 'Save current request as…', onSelect: () => createRequest(null, true) },
+  ];
+  const folderActions = (folder: Folder): MenuAction[] => [
+    { label: folder.isExpanded ? 'Collapse folder' : 'Expand folder', onSelect: () => onToggleFolder(folder.id) },
+    { label: 'New request in folder', onSelect: () => createRequest(folder.id) },
+    { label: 'New subfolder', onSelect: () => createFolder(folder.id) },
+    { label: 'Save current request here…', onSelect: () => createRequest(folder.id, true) },
+    { label: 'Rename folder', onSelect: () => startEditingFolder(folder) },
+    { label: 'Delete folder', destructive: true, onSelect: () => {
+      if (confirm(`Delete "${folder.name}" and all its subfolders and saved requests? Open requests will be kept as unsaved tabs.`)) onDeleteFolder(folder.id);
+    } },
+  ];
+  const requestActions = (request: SavedRequest): MenuAction[] => [
+    { label: 'Open request', onSelect: () => onSelectRequest(request.request, request.id) },
+    { label: 'Rename request', onSelect: () => startEditingRequest(request) },
+    { label: 'Duplicate request', onSelect: () => onDuplicateRequest(request.id) },
+    ...(currentRequestId === request.id ? [{ label: 'Save changes', onSelect: onSaveCurrentRequest }] : []),
+    { label: 'Delete request', destructive: true, onSelect: () => {
+      if (confirm(`Delete "${request.name}" from this collection? Any open copy will be kept as an unsaved tab.`)) onDeleteRequest(request.id);
+    } },
+  ];
+
   const getMethodBadgeClass = (method: string) => {
     switch (method) {
       case 'GET':
@@ -131,6 +190,19 @@ const Sidebar: React.FC<SidebarProps> = ({
         return 'bg-text-tertiary/15 text-text-tertiary';
     }
   };
+
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const matchesRequest = (request: SavedRequest) => !normalizedSearch ||
+    `${request.name} ${request.request.method} ${request.request.endpoint}`.toLowerCase().includes(normalizedSearch);
+  const visibleFolderIds = new Set<string>();
+  const folderHasMatch = (folder: Folder): boolean => {
+    const directMatch = !normalizedSearch || folder.name.toLowerCase().includes(normalizedSearch);
+    const requestMatch = requests.some(request => request.folderId === folder.id && matchesRequest(request));
+    const childMatch = folders.filter(child => child.parentId === folder.id).some(child => folderHasMatch(child));
+    if (directMatch || requestMatch || childMatch) visibleFolderIds.add(folder.id);
+    return directMatch || requestMatch || childMatch;
+  };
+  if (normalizedSearch) folders.filter(folder => folder.parentId === null).forEach(folderHasMatch);
 
   // Drag and drop handlers
   const handleDragStart = (e: React.DragEvent, requestId: string) => {
@@ -216,8 +288,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const renderFolder = (folder: Folder, depth: number = 0) => {
-    const childFolders = folders.filter(f => f.parentId === folder.id);
-    const folderRequests = requests.filter(r => r.folderId === folder.id);
+    const childFolders = folders.filter(f => f.parentId === folder.id && (!normalizedSearch || visibleFolderIds.has(f.id)));
+    const folderRequests = requests.filter(r => r.folderId === folder.id && matchesRequest(r));
     const isDropTarget = dropTargetFolderId === folder.id && !dropTargetRequestId;
 
     return (
@@ -226,6 +298,10 @@ const Sidebar: React.FC<SidebarProps> = ({
           className={`flex items-center gap-1 py-1 px-1.5 hover:bg-dark-bg-tertiary rounded group transition-colors ${
             isDropTarget ? 'bg-accent-primary/20 ring-1 ring-accent-primary' : ''
           }`}
+          tabIndex={0}
+          aria-label={`Folder ${folder.name}`}
+          onContextMenu={event => showContextMenu(event, folder.name, folderActions(folder))}
+          onKeyDown={event => showContextMenu(event, folder.name, folderActions(folder))}
           onDragOver={(e) => handleDragOverFolder(e, folder.id)}
           onDragLeave={handleDragLeave}
           onDrop={(e) => handleDropOnFolder(e, folder.id)}
@@ -248,6 +324,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           {editingFolderId === folder.id ? (
             <input
               type="text"
+              aria-label="Rename folder"
               value={editingFolderName}
               onChange={(e) => setEditingFolderName(e.target.value)}
               onBlur={() => handleRenameFolder(folder.id)}
@@ -283,8 +360,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <Tooltip content="Add subfolder">
                   <button
                     onClick={() => {
-                      setIsCreatingFolder(true);
-                      setNewFolderParentId(folder.id);
+                      createFolder(folder.id);
                     }}
                     className="p-0.5 text-text-tertiary hover:text-accent-success rounded transition-colors"
                   >
@@ -332,6 +408,10 @@ const Sidebar: React.FC<SidebarProps> = ({
             ? 'bg-accent-primary text-white'
             : 'hover:bg-dark-bg-tertiary'
         } ${isDragging ? 'opacity-50' : ''}`}
+        tabIndex={0}
+        aria-label={`Request ${request.name}`}
+        onContextMenu={event => showContextMenu(event, request.name, requestActions(request))}
+        onKeyDown={event => showContextMenu(event, request.name, requestActions(request))}
         draggable
         onDragStart={(e) => handleDragStart(e, request.id)}
         onDragEnd={handleDragEnd}
@@ -351,6 +431,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         {editingRequestId === request.id ? (
           <input
             type="text"
+            aria-label="Rename request"
             value={editingRequestName}
             onChange={(e) => setEditingRequestName(e.target.value)}
             onBlur={() => handleRenameRequest(request.id)}
@@ -445,18 +526,34 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-2 border-b border-dark-border">
         <div className="flex gap-1.5">
           <button
-            onClick={() => setIsCreatingFolder(true)}
+            onClick={() => createFolder(null)}
             className="btn flex-1 text-xs"
           >
             + Folder
           </button>
           <button
-            onClick={() => setIsCreatingRequest(true)}
+            onClick={() => createRequest(null)}
             className="btn-primary flex-1 text-xs"
           >
             + Request
           </button>
         </div>
+      </div>
+
+      <div className="px-2 py-2 border-b border-dark-border">
+        <label className="sr-only" htmlFor="sidebar-request-search">Search requests and folders</label>
+        <div className="relative">
+          <input
+            id="sidebar-request-search"
+            value={searchQuery}
+            onChange={event => setSearchQuery(event.target.value)}
+            placeholder="Search requests..."
+            className="input pr-7 text-xs"
+            type="search"
+          />
+          {searchQuery && <button onClick={() => setSearchQuery('')} aria-label="Clear request search" className="absolute right-1 top-1/2 -translate-y-1/2 px-1 text-text-muted hover:text-text-primary">×</button>}
+        </div>
+        {normalizedSearch && <div className="mt-1 text-[10px] text-text-muted">{requests.filter(matchesRequest).length} matching request{requests.filter(matchesRequest).length === 1 ? '' : 's'}</div>}
       </div>
 
       {isCreatingFolder && (
@@ -500,6 +597,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       {isCreatingRequest && (
         <div className="p-2 bg-accent-success/5 border-b border-accent-success/20">
+          <p className="mb-2 text-xs text-text-secondary">{saveCurrentAs ? 'Save current request as' : 'New empty request'}</p>
           <input
             type="text"
             value={newRequestName}
@@ -531,7 +629,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               onClick={handleSaveRequest}
               className="btn-primary flex-1 text-xs"
             >
-              Save
+              {saveCurrentAs ? 'Save' : 'Create'}
             </button>
             <button
               onClick={() => {
@@ -549,12 +647,16 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       <div
         className="flex-1 p-1.5 overflow-y-auto"
+        tabIndex={0}
+        aria-label="Sidebar requests and folders"
+        onContextMenu={event => showContextMenu(event, 'Collection contents', rootActions)}
+        onKeyDown={event => showContextMenu(event, 'Collection contents', rootActions)}
         onDragOver={(e) => handleDragOverFolder(e, null)}
         onDragLeave={handleDragLeave}
         onDrop={(e) => handleDropOnFolder(e, null)}
       >
-        {rootFolders.map(f => renderFolder(f))}
-        {rootRequests.map(r => renderRequest(r))}
+        {rootFolders.filter(f => !normalizedSearch || visibleFolderIds.has(f.id)).map(f => renderFolder(f))}
+        {rootRequests.filter(matchesRequest).map(r => renderRequest(r))}
 
         {/* Root drop zone indicator */}
         {draggedRequestId && dropTargetFolderId === 'root' && !dropTargetRequestId && (
@@ -568,7 +670,11 @@ const Sidebar: React.FC<SidebarProps> = ({
             No requests yet. Create a request or folder to get started.
           </div>
         )}
+        {normalizedSearch && !folders.some(f => visibleFolderIds.has(f.id)) && !requests.some(matchesRequest) && (
+          <div className="text-center text-text-tertiary text-xs mt-6 px-2">No matching requests or folders.</div>
+        )}
       </div>
+      {contextMenu && <ContextMenu {...contextMenu} onClose={closeMenu} />}
     </div>
   );
 };

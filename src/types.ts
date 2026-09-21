@@ -17,6 +17,13 @@ export interface ApiRequest {
   endpoint: string;
   body?: string;
   headers?: Record<string, string>;
+  bodyType?: 'none' | 'json' | 'text' | 'xml' | 'yaml' | 'form-data' | 'form-urlencoded' | 'graphql' | 'edn' | 'file';
+  auth?: {
+    type: 'none' | 'bearer' | 'basic';
+    token?: string;
+    username?: string;
+    password?: string;
+  };
 }
 
 export interface ApiResponse {
@@ -81,6 +88,8 @@ export interface DiffSettings {
 }
 
 export interface OpenTab {
+  selectedEnv1Id?: string | null;
+  selectedEnv2Id?: string | null;
   id: string;
   title: string;
   request: ApiRequest;

@@ -104,6 +104,7 @@ export default function EnvironmentManager({
             Main Environment
           </label>
           <select
+            aria-label="Main environment"
             value={selectedEnv1Id || ''}
             onChange={(e) => onSelectEnv1(e.target.value || null)}
             className="input w-full"
@@ -119,6 +120,7 @@ export default function EnvironmentManager({
             Comparison Environment
           </label>
           <select
+            aria-label="Comparison environment"
             value={selectedEnv2Id || ''}
             onChange={(e) => onSelectEnv2(e.target.value || null)}
             className="input w-full"

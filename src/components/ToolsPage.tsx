@@ -55,6 +55,7 @@ export default function ToolsPage({ isOpen, onClose }: ToolsPageProps) {
           <div className="flex items-center gap-1">
             <Tooltip content={isMaximized ? 'Restore' : 'Maximize'}>
               <button
+                aria-label={isMaximized ? 'Restore tools' : 'Maximize tools'}
                 onClick={() => setIsMaximized(!isMaximized)}
                 className="p-1.5 rounded hover:bg-dark-bg-tertiary transition-colors text-text-secondary hover:text-text-primary"
               >
@@ -72,6 +73,7 @@ export default function ToolsPage({ isOpen, onClose }: ToolsPageProps) {
             <Tooltip content="Close">
               <button
                 onClick={onClose}
+                aria-label="Close tools"
                 className="p-1.5 rounded hover:bg-dark-bg-tertiary transition-colors text-text-secondary hover:text-text-primary"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -82,7 +84,7 @@ export default function ToolsPage({ isOpen, onClose }: ToolsPageProps) {
           </div>
         </div>
 
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Sidebar with tabs */}
           <div className="w-48 flex-shrink-0 border-r border-dark-border bg-dark-bg p-2">
             <nav className="space-y-1">
@@ -104,9 +106,9 @@ export default function ToolsPage({ isOpen, onClose }: ToolsPageProps) {
           </div>
 
           {/* Content area */}
-          <div className="flex-1 overflow-auto p-4">
-            {activeTab === 'json-viewer' && <JsonViewer />}
-            {activeTab === 'json-diff' && <JsonDiff />}
+          <div className="flex-1 min-w-0 min-h-0 overflow-auto p-4">
+            <div className={activeTab === 'json-viewer' ? 'h-full min-h-[280px]' : 'hidden'}><JsonViewer /></div>
+            <div className={activeTab === 'json-diff' ? 'h-full min-h-[400px]' : 'hidden'}><JsonDiff /></div>
           </div>
         </div>
       </div>
