@@ -1,27 +1,64 @@
-import React, { useState, useRef, useCallback } from 'react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import type { ApiRequest } from '../types';
+import React, { useMemo, useState } from 'react';
+import JsonEditor from './JsonEditor';
+import AuthForm from './AuthForm';
+import type { ApiRequest, ExtractionRule } from '../types';
+import { ENV_STYLES, methodColor } from '../utils/envColors';
 import Tooltip from './Tooltip';
 
 interface RequestBuilderProps {
   request: ApiRequest;
   onChange: (req: ApiRequest) => void;
   onSend: () => void;
+  onCancel?: () => void;
   loading: boolean;
+  resolvedUrls?: { env1: string | null; env2: string | null };
   onShowCurl?: (envIndex: 1 | 2) => void;
   isSingleMode?: boolean;
   singleEnvIndex?: 1 | 2 | null;
 }
 
-const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSend, loading, onShowCurl, isSingleMode, singleEnvIndex }) => {
+const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSend, onCancel, loading, resolvedUrls, onShowCurl, isSingleMode, singleEnvIndex }) => {
+  const [activeSection, setActiveSection] = useState<'params' | 'body' | 'auth' | 'headers' | 'scripts' | 'extract' | 'docs'>('body');
   const [headerKey, setHeaderKey] = useState('');
   const [headerValue, setHeaderValue] = useState('');
   const [editingHeaderKey, setEditingHeaderKey] = useState<string | null>(null);
   const [editingHeaderNewKey, setEditingHeaderNewKey] = useState('');
   const [editingHeaderNewValue, setEditingHeaderNewValue] = useState('');
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [bodyError, setBodyError] = useState<string | null>(null);
+  const [paramDrafts, setParamDrafts] = useState<Array<[string, string]>>([]);
+  const [showCurlMenu, setShowCurlMenu] = useState(false);
+  const bodyType = request.bodyType || (request.body ? 'json' : 'none');
+  const queryEntries = useMemo(() => {
+    const [, query = ''] = request.endpoint.split('?');
+    return Array.from(new URLSearchParams(query).entries());
+  }, [request.endpoint]);
+  const updateQueryEntries = (entries: Array<[string, string]>) => {
+    const path = request.endpoint.split('?')[0];
+    const query = new URLSearchParams(entries.filter(([key]) => key.trim())).toString();
+    onChange({ ...request, endpoint: query ? `${path}?${query}` : path });
+  };
+  const paramRows = queryEntries.length ? queryEntries : paramDrafts;
+  const updateParamRow = (index: number, key: string, value: string) => {
+    const next = [...paramRows];
+    next[index] = [key, value];
+    if (queryEntries.length || key.trim()) {
+      updateQueryEntries(next);
+      setParamDrafts([]);
+    } else {
+      setParamDrafts(next);
+    }
+  };
+  const auth = request.auth || { type: 'none' as const };
+  const updateAuth = (next: ApiRequest['auth']) => {
+    const headers = { ...(request.headers || {}) };
+    delete headers.Authorization;
+    delete headers.authorization;
+    if ((next?.type === 'bearer' || next?.type === 'jwt' || next?.type === 'ciba') && next.token) headers.Authorization = `Bearer ${next.token}`;
+    if (next?.type === 'basic' && (next.username || next.password)) {
+      headers.Authorization = `Basic ${btoa(`${next.username || ''}:${next.password || ''}`)}`;
+    }
+    onChange({ ...request, auth: next, headers });
+  };
 
   const addHeader = () => {
     if (headerKey && headerValue) {
@@ -87,77 +124,14 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
     setEditingHeaderNewValue('');
   };
 
-  const getMethodColor = (method: string) => {
-    switch (method) {
-      case 'GET': return 'text-method-get';
-      case 'POST': return 'text-method-post';
-      case 'PUT': return 'text-method-put';
-      case 'PATCH': return 'text-method-patch';
-      case 'DELETE': return 'text-method-delete';
-      default: return 'text-text-primary';
-    }
-  };
-
   const formatBody = () => {
+    setBodyError(null);
     try {
       const parsed = JSON.parse(request.body || '{}');
-      onChange({ ...request, body: JSON.stringify(parsed, null, 2) });
-    } catch {
-      // Invalid JSON, do nothing
+      onChange({ ...request, bodyType: 'json', body: JSON.stringify(parsed, null, 2) });
+    } catch (error) {
+      setBodyError(error instanceof Error ? error.message : 'Invalid JSON');
     }
-  };
-
-  const handleBodyChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    onChange({ ...request, body: e.target.value });
-  }, [onChange, request]);
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const textarea = e.currentTarget;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const value = textarea.value;
-      const newValue = value.substring(0, start) + '  ' + value.substring(end);
-      onChange({ ...request, body: newValue });
-      // Set cursor position after the inserted spaces
-      setTimeout(() => {
-        textarea.selectionStart = textarea.selectionEnd = start + 2;
-      }, 0);
-    }
-  }, [onChange, request]);
-
-  // Sync scroll between textarea and syntax highlighter
-  const handleScroll = useCallback((e: React.UIEvent<HTMLTextAreaElement>) => {
-    if (containerRef.current) {
-      const pre = containerRef.current.querySelector('pre');
-      if (pre) {
-        pre.scrollTop = e.currentTarget.scrollTop;
-        pre.scrollLeft = e.currentTarget.scrollLeft;
-      }
-    }
-  }, []);
-
-  // Custom dark theme for syntax highlighting
-  const darkCodeTheme = {
-    ...oneDark,
-    'pre[class*="language-"]': {
-      ...oneDark['pre[class*="language-"]'],
-      background: 'transparent',
-      margin: 0,
-      padding: '8px',
-      fontSize: '11px',
-      fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-      lineHeight: '1.4',
-      overflow: 'auto',
-    },
-    'code[class*="language-"]': {
-      ...oneDark['code[class*="language-"]'],
-      background: 'transparent',
-      fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-      fontSize: '11px',
-      lineHeight: '1.4',
-    },
   };
 
   const body = request.body || '';
@@ -166,11 +140,11 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
     <div className="card p-2">
       <div className="space-y-2">
         {/* Request URL bar */}
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           <select
             value={request.method}
             onChange={(e) => onChange({ ...request, method: e.target.value as ApiRequest['method'] })}
-            className={`input w-20 text-xs font-semibold ${getMethodColor(request.method)}`}
+            className={`input w-20 text-xs font-semibold ${methodColor(request.method)}`}
           >
             <option value="GET" className="text-method-get">GET</option>
             <option value="POST" className="text-method-post">POST</option>
@@ -182,7 +156,7 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
             type="text"
             value={request.endpoint}
             onChange={(e) => onChange({ ...request, endpoint: e.target.value })}
-            className="input flex-1 text-xs"
+            className="input flex-1 min-w-0 text-xs"
             placeholder="/api/users"
           />
           <button
@@ -207,121 +181,140 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
               </>
             )}
           </button>
+          {loading && onCancel && (
+            <button onClick={onCancel} className="btn text-xs px-2 text-accent-error" title="Cancel request">
+              Cancel
+            </button>
+          )}
           {onShowCurl && (
-            <div className="flex gap-1">
-              {isSingleMode ? (
-                // Single environment mode - show one button
-                <Tooltip content="Show cURL command">
-                  <button
-                    onClick={() => onShowCurl(singleEnvIndex || 1)}
-                    className="btn text-xs px-2"
-                  >
-                    cURL
-                  </button>
-                </Tooltip>
-              ) : (
-                // Dual environment mode - show both buttons
-                <>
-                  <Tooltip content="Show cURL for Environment 1">
-                    <button
-                      onClick={() => onShowCurl(1)}
-                      className="btn text-xs px-2"
-                    >
-                      cURL 1
-                    </button>
-                  </Tooltip>
-                  <Tooltip content="Show cURL for Environment 2">
-                    <button
-                      onClick={() => onShowCurl(2)}
-                      className="btn text-xs px-2"
-                    >
-                      cURL 2
-                    </button>
-                  </Tooltip>
-                </>
-              )}
-            </div>
+            isSingleMode ? (
+              <Tooltip content="Show cURL command">
+                <button onClick={() => onShowCurl(singleEnvIndex || 1)} className="btn text-xs px-2">cURL</button>
+              </Tooltip>
+            ) : (
+              <div className="relative">
+                <button
+                  onClick={() => setShowCurlMenu(v => !v)}
+                  className="btn text-xs px-2 flex items-center gap-1"
+                  aria-haspopup="menu"
+                  aria-expanded={showCurlMenu}
+                  title="Show cURL command"
+                >
+                  cURL
+                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </button>
+                {showCurlMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowCurlMenu(false)} />
+                    <div role="menu" className="absolute right-0 z-50 mt-1 w-44 rounded-md border border-dark-border bg-dark-bg-secondary p-1 shadow-xl">
+                      {([1, 2] as const).map(envIndex => (
+                        <button
+                          key={envIndex}
+                          role="menuitem"
+                          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-text-primary hover:bg-dark-bg-tertiary"
+                          onClick={() => { setShowCurlMenu(false); onShowCurl(envIndex); }}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${ENV_STYLES[envIndex].dot}`} aria-hidden="true" />
+                          <span className={ENV_STYLES[envIndex].text}>{envIndex === 1 ? 'Main' : 'Comparison'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )
           )}
         </div>
 
-        {/* Request body with syntax highlighting */}
-        {(request.method === 'POST' || request.method === 'PUT' || request.method === 'PATCH') && (
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="block text-xs font-medium text-text-secondary">
-                Request Body
-              </label>
-              <button
-                type="button"
-                onClick={formatBody}
-                className="btn text-xs"
-                title="Beautify JSON"
-              >
-                Beautify
-              </button>
-            </div>
-            <div
-              ref={containerRef}
-              className="relative rounded border border-[#30363d]/40 focus-within:border-[#58a6ff]/40 bg-[#0d1117] overflow-hidden transition-colors"
-              style={{ minHeight: '120px' }}
-            >
-              {/* Syntax highlighted background */}
-              <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                <SyntaxHighlighter
-                  language="json"
-                  style={darkCodeTheme}
-                  customStyle={{
-                    margin: 0,
-                    padding: '8px',
-                    background: 'transparent',
-                    minHeight: '120px',
-                    overflow: 'hidden',
-                  }}
-                  codeTagProps={{
-                    style: {
-                      fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-                      fontSize: '11px',
-                      lineHeight: '1.4',
-                    }
-                  }}
-                >
-                  {body || ' '}
-                </SyntaxHighlighter>
-              </div>
-              {/* Transparent textarea for editing */}
-              <textarea
-                ref={textareaRef}
-                value={body}
-                onChange={handleBodyChange}
-                onKeyDown={handleKeyDown}
-                onScroll={handleScroll}
-                className="relative w-full bg-transparent text-transparent caret-white resize-y font-mono outline-none"
-                style={{
-                  padding: '8px',
-                  fontSize: '11px',
-                  lineHeight: '1.4',
-                  minHeight: '120px',
-                  fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-                  caretColor: '#58a6ff',
-                }}
-                placeholder=""
-                spellCheck={false}
-              />
-              {/* Placeholder when empty */}
-              {!body && (
-                <div
-                  className="absolute top-2 left-2 text-text-tertiary text-xs font-mono pointer-events-none"
-                  style={{ fontSize: '11px', lineHeight: '1.4' }}
-                >
-                  {'{"key": "value"}'}
-                </div>
-              )}
-            </div>
+        {resolvedUrls && (resolvedUrls.env1 || resolvedUrls.env2) && (
+          <div className="rounded border border-dark-border/70 bg-dark-bg-tertiary/40 px-2 py-1.5 text-[10px] text-text-muted space-y-0.5" title="Variables are substituted when the request is sent">
+            <div className="font-medium text-text-secondary">Resolved destination</div>
+            {resolvedUrls.env1 && <div className="truncate"><span className={ENV_STYLES[1].text}>Main</span> · {resolvedUrls.env1}</div>}
+            {resolvedUrls.env2 && <div className="truncate"><span className={ENV_STYLES[2].text}>Comparison</span> · {resolvedUrls.env2}</div>}
           </div>
         )}
 
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-dark-border pt-1" role="tablist" aria-label="Request options">
+          {(['params', 'body', 'auth', 'headers', 'scripts', 'extract', 'docs'] as const).map(section => (
+            <button key={section} type="button" role="tab" aria-selected={activeSection === section} onClick={() => setActiveSection(section)}
+              className={`shrink-0 px-2 py-1 text-[10px] capitalize ${activeSection === section ? 'border-b-2 border-accent-primary text-text-primary' : 'text-text-muted hover:text-text-primary'}`}>
+              {section === 'headers' ? `Headers${Object.keys(request.headers || {}).length ? ` (${Object.keys(request.headers || {}).length})` : ''}` : section}
+            </button>
+          ))}
+        </div>
+
+        {activeSection === 'params' && <div className="space-y-2">
+          <div className="text-xs text-text-secondary">Query parameters</div>
+          {paramRows.map(([key, value], index) => <div key={`${index}-${key}`} className="flex gap-1.5">
+            <input className="input text-xs" value={key} placeholder="Parameter" onChange={event => updateParamRow(index, event.target.value, value)} />
+            <input className="input text-xs" value={value} placeholder="Value" onChange={event => updateParamRow(index, key, event.target.value)} />
+            <button className="btn text-xs" aria-label={`Remove parameter ${key || index + 1}`} onClick={() => queryEntries.length ? updateQueryEntries(queryEntries.filter((_, entryIndex) => entryIndex !== index)) : setParamDrafts(paramDrafts.filter((_, entryIndex) => entryIndex !== index))}>×</button>
+          </div>)}
+          <button className="btn text-xs" onClick={() => setParamDrafts([...paramRows, ['', '']])}>+ Add parameter</button>
+        </div>}
+
+        {/* Request body with syntax highlighting */}
+        {activeSection === 'body' && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium text-text-secondary">Request body</label>
+              <select aria-label="Body type" value={bodyType} onChange={event => onChange({ ...request, bodyType: event.target.value as ApiRequest['bodyType'], body: event.target.value === 'none' ? '' : request.body })} className="input w-40 text-xs">
+                <option value="none">No Body</option><option value="json">JSON</option><option value="text">Plain Text</option><option value="xml">XML</option><option value="yaml">YAML</option><option value="graphql">GraphQL</option><option value="form-data">Form Data</option><option value="form-urlencoded">Form URL Encoded</option><option value="file">File</option>
+              </select>
+            </div>
+            {bodyType !== 'none' && <>
+              {bodyType === 'json' && <button type="button" onClick={formatBody} className="btn text-xs" title="Beautify JSON">Beautify</button>}
+              {bodyType !== 'json' && <p className="mb-1 text-[10px] text-text-muted">{bodyType === 'file' ? 'File upload support is coming next.' : `${bodyType} body`}</p>}
+            <JsonEditor
+              label="Request body JSON"
+              value={body}
+              onChange={body => { setBodyError(null); onChange({ ...request, body }); }}
+              placeholder='{"key": "value"}'
+              className="h-64 min-h-[120px] max-h-[60vh] resize-y"
+            />
+            {bodyError && <p role="alert" className="mt-1 text-xs text-accent-error">{bodyError}</p>}
+            </>}
+
+          </div>
+        )}
+
+        {activeSection === 'auth' && <div className="space-y-2">
+          <label className="block text-xs font-medium text-text-secondary">Authentication</label>
+          <AuthForm auth={auth} onChange={updateAuth} allowInherit />
+          <p className="text-[10px] text-text-muted">Authentication is applied to the Authorization header when the request is sent. JWT/CIBA tokens refresh automatically when expired.</p>
+        </div>}
+
+        {activeSection === 'scripts' && <div className="space-y-2">
+          <label className="block text-xs font-medium text-text-secondary">Pre-request Script</label>
+          <textarea className="input text-xs font-mono" rows={4} value={request.scripts?.pre || ''} spellCheck={false}
+            placeholder="// Runs before sending. Available: pm.variables.get/set, request, console.log&#10;// pm.variables.set('timestamp', Date.now());"
+            onChange={event => onChange({ ...request, scripts: { ...request.scripts, pre: event.target.value } })} />
+          <label className="block text-xs font-medium text-text-secondary">Response Script (tests)</label>
+          <textarea className="input text-xs font-mono" rows={4} value={request.scripts?.post || ''} spellCheck={false}
+            placeholder="// Runs after the response. Available: pm.response, pm.test, pm.expect&#10;// pm.test('status is 200', () => pm.expect(pm.response.status).toBe(200));"
+            onChange={event => onChange({ ...request, scripts: { ...request.scripts, post: event.target.value } })} />
+          <p className="text-[10px] text-text-muted">Variables set via pm.variables.set() are saved into the active environment.</p>
+        </div>}
+
+        {activeSection === 'extract' && <div className="space-y-2">
+          <label className="block text-xs font-medium text-text-secondary">Extract response fields into environment variables</label>
+          {(request.extractions || []).map(rule => (
+            <div key={rule.id} className="flex items-center gap-1.5">
+              <input type="checkbox" aria-label="Enable rule" checked={rule.enabled} onChange={event => onChange({ ...request, extractions: (request.extractions || []).map(r => r.id === rule.id ? { ...r, enabled: event.target.checked } : r) })} />
+              <input className="input text-xs flex-1 font-mono" value={rule.path} placeholder="$.data.id" onChange={event => onChange({ ...request, extractions: (request.extractions || []).map(r => r.id === rule.id ? { ...r, path: event.target.value } : r) })} />
+              <span className="text-text-muted text-xs">→</span>
+              <input className="input text-xs flex-1" value={rule.variable} placeholder="variableName" onChange={event => onChange({ ...request, extractions: (request.extractions || []).map(r => r.id === rule.id ? { ...r, variable: event.target.value } : r) })} />
+              <button type="button" aria-label="Remove rule" className="text-text-muted hover:text-red-400 px-1" onClick={() => onChange({ ...request, extractions: (request.extractions || []).filter(r => r.id !== rule.id) })}>×</button>
+            </div>
+          ))}
+          <button type="button" className="btn-accent px-2 py-1 text-xs" onClick={() => onChange({ ...request, extractions: [...(request.extractions || []), { id: crypto.randomUUID(), path: '', variable: '', enabled: true } as ExtractionRule] })}>+ Add Extraction</button>
+          <p className="text-[10px] text-text-muted">Paths use JSONPath-lite syntax, e.g. $.data.user.id or $.items[0].token</p>
+        </div>}
+
+        {activeSection === 'docs' && <div className="rounded border border-dashed border-dark-border p-4 text-center text-xs text-text-muted">Add notes and documentation for this request here.</div>}
+
         {/* Headers */}
-        <div>
+        {activeSection === 'headers' && <div>
           <label className="block text-xs font-medium text-text-secondary mb-1">
             Request Headers
           </label>
@@ -418,14 +411,14 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
               type="text"
               value={headerKey}
               onChange={(e) => setHeaderKey(e.target.value)}
-              className="input flex-1 text-xs"
+              className="input flex-1 min-w-0 text-xs"
               placeholder="Header key"
             />
             <input
               type="text"
               value={headerValue}
               onChange={(e) => setHeaderValue(e.target.value)}
-              className="input flex-1 text-xs"
+              className="input flex-1 min-w-0 text-xs"
               placeholder="Header value"
             />
             <Tooltip content="Add header">
@@ -439,7 +432,7 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
               </button>
             </Tooltip>
           </div>
-        </div>
+        </div>}
       </div>
     </div>
   );

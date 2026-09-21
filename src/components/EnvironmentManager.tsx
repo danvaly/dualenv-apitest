@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { Environment, EnvironmentVariable } from '../types';
+import AuthForm from './AuthForm';
+import { ENV_STYLES } from '../utils/envColors';
 
 interface EnvironmentManagerProps {
   environments: Environment[];
@@ -42,6 +44,8 @@ export default function EnvironmentManager({
   };
 
   const deleteEnvironment = (id: string) => {
+    const env = environments.find(e => e.id === id);
+    if (env && !confirm(`Delete environment "${env.name}"? Its variables and authentication settings will be lost.`)) return;
     onEnvironmentsChange(environments.filter(e => e.id !== id));
     if (selectedEnv1Id === id) onSelectEnv1(null);
     if (selectedEnv2Id === id) onSelectEnv2(null);
@@ -100,13 +104,15 @@ export default function EnvironmentManager({
       {/* Environment Selectors */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1">
-            Main Environment
+          <label className="flex items-center gap-1.5 text-xs font-medium text-text-secondary mb-1">
+            <span className={`w-2 h-2 rounded-full ${ENV_STYLES[1].dot}`} aria-hidden="true" />
+            <span className={ENV_STYLES[1].text}>Main Environment</span>
           </label>
           <select
+            aria-label="Main environment"
             value={selectedEnv1Id || ''}
             onChange={(e) => onSelectEnv1(e.target.value || null)}
-            className="input w-full"
+            className={`input w-full border-l-2 ${ENV_STYLES[1].border}`}
           >
             <option value="">Select environment...</option>
             {environments.map(env => (
@@ -115,13 +121,15 @@ export default function EnvironmentManager({
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-text-secondary mb-1">
-            Comparison Environment
+          <label className="flex items-center gap-1.5 text-xs font-medium text-text-secondary mb-1">
+            <span className={`w-2 h-2 rounded-full ${ENV_STYLES[2].dot}`} aria-hidden="true" />
+            <span className={ENV_STYLES[2].text}>Comparison Environment</span>
           </label>
           <select
+            aria-label="Comparison environment"
             value={selectedEnv2Id || ''}
             onChange={(e) => onSelectEnv2(e.target.value || null)}
-            className="input w-full"
+            className={`input w-full border-l-2 ${ENV_STYLES[2].border}`}
           >
             <option value="">Select environment...</option>
             {environments.map(env => (
@@ -283,6 +291,15 @@ export default function EnvironmentManager({
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  {/* Authentication */}
+                  <div className="space-y-1 mt-2 pt-2 border-t border-dark-border">
+                    <label className="text-xs text-text-muted">Authentication (used by requests set to "Inherit from Environment")</label>
+                    <AuthForm
+                      auth={env.auth || { type: 'none' }}
+                      onChange={auth => updateEnvironment(env.id, { auth })}
+                    />
                   </div>
 
                   {/* Usage hint */}

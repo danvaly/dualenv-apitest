@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import type { ApiResponse } from '../types';
 import * as Diff from 'diff';
 import JsonDisplay from './JsonDisplay';
 import Tooltip from './Tooltip';
+import { ENV_STYLES } from '../utils/envColors';
 
 interface ResponseComparisonProps {
   env1Name: string;
@@ -64,6 +65,8 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
 }) => {
   const [newIgnoredPath, setNewIgnoredPath] = useState('');
   const [showIgnoredPaths, setShowIgnoredPaths] = useState(false);
+  const [activeDifference, setActiveDifference] = useState(0);
+  const diffRowRefs = useRef<Record<number, HTMLTableRowElement | null>>({});
 
   const formatJson = (obj: any) => {
     try {
@@ -320,6 +323,15 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
       removed: diffWithMoves.filter(l => l.type === 'removed' || l.type === 'moved-from').length,
     };
   }, [diffWithMoves]);
+  const differenceIndexes = useMemo(() => diffWithMoves
+    ?.map((line, index) => line.type === 'added' || line.type === 'removed' || line.type === 'moved-from' || line.type === 'moved-to' ? index : -1)
+    .filter(index => index >= 0) || [], [diffWithMoves]);
+  const jumpToDifference = (direction: 1 | -1) => {
+    if (differenceIndexes.length === 0) return;
+    const next = (activeDifference + direction + differenceIndexes.length) % differenceIndexes.length;
+    setActiveDifference(next);
+    diffRowRefs.current[differenceIndexes[next]]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
 
   const getStatusBadgeClass = (status: number) => {
     if (status >= 200 && status < 300) {
@@ -347,6 +359,15 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
       );
     }
 
+    const responseSize = (() => {
+      try {
+        return new Blob([typeof response.data === 'string' ? response.data : JSON.stringify(response.data)]).size;
+      } catch {
+        return 0;
+      }
+    })();
+    const formattedSize = responseSize < 1024 ? `${responseSize} B` : responseSize < 1024 * 1024 ? `${(responseSize / 1024).toFixed(1)} KB` : `${(responseSize / (1024 * 1024)).toFixed(1)} MB`;
+
     return (
       <div className="space-y-2">
         <div className="flex items-center justify-between bg-dark-bg-tertiary px-2 py-1.5 rounded text-xs">
@@ -354,10 +375,11 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
             <span className={`badge ${getStatusBadgeClass(response.status)}`}>
               {response.status}
             </span>
-            <span className="text-text-secondary">
-              {response.duration}ms
-            </span>
+            <span className="text-text-primary">{response.statusText || 'Response'}</span>
+            <span className="text-text-secondary" title="Round-trip duration">{response.duration}ms</span>
+            <span className="text-text-muted" title="Approximate response size">{formattedSize}</span>
           </div>
+          <span className="text-text-muted">{Object.keys(response.headers).length} headers</span>
         </div>
 
         <JsonDisplay data={response.data} defaultBeautified={true} showBeautifyToggle={true} />
@@ -367,6 +389,13 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
             <div className="text-xs font-medium text-text-secondary mb-1">
               Response Headers
             </div>
+            {differenceIndexes.length > 0 && (
+              <div className="flex items-center gap-1 text-[10px] text-text-muted">
+                <span>{activeDifference + 1}/{differenceIndexes.length} changes</span>
+                <button onClick={() => jumpToDifference(-1)} className="btn px-1 py-0" aria-label="Previous difference">↑</button>
+                <button onClick={() => jumpToDifference(1)} className="btn px-1 py-0" aria-label="Next difference">↓</button>
+              </div>
+            )}
             {Object.entries(response.headers).map(([key, value]) => (
               <div key={key} className="text-xs font-mono">
                 <span className="font-medium text-text-primary">{key}:</span>{' '}
@@ -388,10 +417,28 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
         <div className="flex items-center justify-between px-2 py-1.5 bg-[#161b22] border-b border-[#30363d]">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-[#c9d1d9]">Diff View</span>
+            {diffStats.added === 0 && diffStats.removed === 0 ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#3fb950]/15 text-[#3fb950] border border-[#3fb950]/30">
+                ✓ Responses identical
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#f85149]/15 text-[#f85149] border border-[#f85149]/30">
+                {diffStats.added + diffStats.removed} changed lines
+              </span>
+            )}
             <div className="flex items-center gap-1.5 text-xs">
               <span className="text-[#3fb950]">+{diffStats.added}</span>
               <span className="text-[#f85149]">-{diffStats.removed}</span>
             </div>
+          </div>
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${ENV_STYLES[1].border} ${ENV_STYLES[1].bg} ${ENV_STYLES[1].text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${ENV_STYLES[1].dot}`} />{env1Name}
+            </span>
+            <span className="text-text-muted">vs</span>
+            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${ENV_STYLES[2].border} ${ENV_STYLES[2].bg} ${ENV_STYLES[2].text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${ENV_STYLES[2].dot}`} />{env2Name}
+            </span>
           </div>
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-1.5 text-xs text-[#8b949e] cursor-pointer" title="When enabled, keys and array elements are sorted before comparison, ignoring positional differences">
@@ -501,7 +548,7 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
                 }
 
                 return (
-                  <tr key={index} className={`${bgClass} border-0`}>
+                  <tr ref={row => { diffRowRefs.current[index] = row; }} key={index} className={`${bgClass} border-0 ${differenceIndexes[activeDifference] === index ? 'outline outline-1 outline-accent-primary' : ''}`}>
                     {/* Old line number */}
                     <td className={`w-10 px-2 py-0 text-right select-none border-r border-[#30363d] ${lineNumBg}`}>
                       {line.oldLineNum || ''}
@@ -564,10 +611,15 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
   }
 
   // Render single environment response panel
-  const renderSingleResponsePanel = (response: ApiResponse | null, envName: string, loading: boolean, envIndex: 1 | 2) => (
-    <div className="card p-2">
+  const renderSingleResponsePanel = (response: ApiResponse | null, envName: string, loading: boolean, envIndex: 1 | 2) => {
+    const envStyle = ENV_STYLES[envIndex];
+    return (
+    <div className={`card p-2 border-t-2 ${envStyle.border}`}>
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold text-text-primary">{envName}</h3>
+        <h3 className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
+          <span className={`w-2 h-2 rounded-full ${envStyle.dot}`} aria-hidden="true" />
+          <span className={envStyle.text}>{envName}</span>
+        </h3>
         {onRerun && (
           <button
             onClick={() => onRerun(envIndex)}
@@ -605,7 +657,8 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
         renderResponse(response)
       )}
     </div>
-  );
+    );
+  };
 
   // Single mode - show only one response panel
   if (singleMode && singleEnvIndex) {

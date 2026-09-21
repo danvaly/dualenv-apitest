@@ -1,4 +1,5 @@
-import { useState, useCallback, useRef } from 'react';
+import JsonEditor from '../JsonEditor';
+import { useState, useCallback } from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import Tooltip from '../Tooltip';
@@ -31,8 +32,6 @@ export default function JsonViewer() {
   const [error, setError] = useState<string | null>(null);
   const [indentSize, setIndentSize] = useState(2);
   const [isMinified, setIsMinified] = useState(false);
-  const inputContainerRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const formatJson = useCallback((minify: boolean = false) => {
     setError(null);
@@ -81,40 +80,13 @@ export default function JsonViewer() {
       const text = await navigator.clipboard.readText();
       setInputJson(text);
       setError(null);
-    } catch (e) {
+    } catch {
       setError('Failed to paste from clipboard');
     }
   };
 
-  // Sync scroll between textarea and syntax highlighter
-  const handleScroll = useCallback((e: React.UIEvent<HTMLTextAreaElement>) => {
-    if (inputContainerRef.current) {
-      const pre = inputContainerRef.current.querySelector('pre');
-      if (pre) {
-        pre.scrollTop = e.currentTarget.scrollTop;
-        pre.scrollLeft = e.currentTarget.scrollLeft;
-      }
-    }
-  }, []);
-
-  // Handle tab key for indentation
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const textarea = e.currentTarget;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const value = textarea.value;
-      const newValue = value.substring(0, start) + '  ' + value.substring(end);
-      setInputJson(newValue);
-      setTimeout(() => {
-        textarea.selectionStart = textarea.selectionEnd = start + 2;
-      }, 0);
-    }
-  }, []);
-
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-h-0 flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-base font-semibold text-text-primary">JSON Viewer</h3>
         <div className="flex items-center gap-2">
@@ -135,7 +107,7 @@ export default function JsonViewer() {
 
       <div className="flex-1 flex gap-4 min-h-0">
         {/* Input Panel */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-text-secondary">Input JSON</span>
             <div className="flex gap-1">
@@ -161,60 +133,8 @@ export default function JsonViewer() {
               </Tooltip>
             </div>
           </div>
-          <div
-            ref={inputContainerRef}
-            className="flex-1 relative rounded border border-dark-border focus-within:ring-1 focus-within:ring-accent-primary bg-dark-bg overflow-hidden"
-          >
-            {/* Syntax highlighted background */}
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              <SyntaxHighlighter
-                language="json"
-                style={darkCodeTheme}
-                customStyle={{
-                  margin: 0,
-                  padding: '12px',
-                  background: 'transparent',
-                  height: '100%',
-                  overflow: 'hidden',
-                }}
-                codeTagProps={{
-                  style: {
-                    fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-                    fontSize: '13px',
-                    lineHeight: '1.4',
-                  }
-                }}
-              >
-                {inputJson || ' '}
-              </SyntaxHighlighter>
-            </div>
-            {/* Transparent textarea for editing */}
-            <textarea
-              ref={textareaRef}
-              value={inputJson}
-              onChange={(e) => setInputJson(e.target.value)}
-              onScroll={handleScroll}
-              onKeyDown={handleKeyDown}
-              className="relative w-full h-full bg-transparent text-transparent caret-white resize-none font-mono outline-none"
-              style={{
-                padding: '12px',
-                fontSize: '13px',
-                lineHeight: '1.4',
-                fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-                caretColor: '#58a6ff',
-              }}
-              spellCheck={false}
-            />
-            {/* Placeholder when empty */}
-            {!inputJson && (
-              <div
-                className="absolute top-3 left-3 text-text-tertiary font-mono pointer-events-none"
-                style={{ fontSize: '13px', lineHeight: '1.4' }}
-              >
-                Paste your JSON here...
-              </div>
-            )}
-          </div>
+          <JsonEditor label="Input JSON" value={inputJson} onChange={setInputJson}
+            placeholder="Paste your JSON here..." className="flex-1 min-h-0 resize-none" />
         </div>
 
         {/* Action Buttons */}
@@ -244,7 +164,7 @@ export default function JsonViewer() {
         </div>
 
         {/* Output Panel */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-text-secondary">
               Output {isMinified && outputJson ? '(minified)' : outputJson ? '(prettified)' : ''}

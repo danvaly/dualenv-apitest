@@ -1,32 +1,9 @@
-import { useState, useCallback, useMemo, useRef } from 'react';
+import JsonEditor from '../JsonEditor';
+import { useState, useCallback, useMemo } from 'react';
 import { diffJson, type Change } from 'diff';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import Tooltip from '../Tooltip';
 
 type ViewMode = 'side-by-side' | 'inline';
-
-// Custom dark theme for syntax highlighting
-const darkCodeTheme = {
-  ...oneDark,
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    background: 'transparent',
-    margin: 0,
-    padding: '12px',
-    fontSize: '13px',
-    fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-    lineHeight: '1.4',
-    overflow: 'auto',
-  },
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    background: 'transparent',
-    fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-    fontSize: '13px',
-    lineHeight: '1.4',
-  },
-};
 
 // Recursively sort object keys and array elements for semantic comparison
 const sortObjectKeys = (obj: unknown): unknown => {
@@ -56,12 +33,9 @@ const sortObjectKeys = (obj: unknown): unknown => {
 export default function JsonDiff() {
   const [leftJson, setLeftJson] = useState('');
   const [rightJson, setRightJson] = useState('');
-  const [error, setError] = useState<{ left?: string; right?: string }>({});
   const [viewMode, setViewMode] = useState<ViewMode>('side-by-side');
   const [showOnlyDiffs, setShowOnlyDiffs] = useState(false);
   const [ignoreKeyOrder, setIgnoreKeyOrder] = useState(true);
-  const leftContainerRef = useRef<HTMLDivElement>(null);
-  const rightContainerRef = useRef<HTMLDivElement>(null);
 
   const parseAndFormat = useCallback((json: string, normalize: boolean): { parsed: object; formatted: string } | null => {
     if (!json.trim()) return null;
@@ -76,40 +50,38 @@ export default function JsonDiff() {
     }
   }, []);
 
-  const diffResult = useMemo(() => {
-    setError({});
+  const { diffResult, error } = useMemo(() => {
+    const error: { left?: string; right?: string } = {};
 
     if (!leftJson.trim() && !rightJson.trim()) {
-      return null;
+      return { diffResult: null, error };
     }
 
     const leftParsed = parseAndFormat(leftJson, ignoreKeyOrder);
     const rightParsed = parseAndFormat(rightJson, ignoreKeyOrder);
 
-    const newError: { left?: string; right?: string } = {};
     if (leftJson.trim() && !leftParsed) {
-      newError.left = 'Invalid JSON';
+      error.left = 'Invalid JSON';
     }
     if (rightJson.trim() && !rightParsed) {
-      newError.right = 'Invalid JSON';
+      error.right = 'Invalid JSON';
     }
 
-    if (newError.left || newError.right) {
-      setError(newError);
-      return null;
+    if (error.left || error.right) {
+      return { diffResult: null, error };
     }
 
     if (!leftParsed || !rightParsed) {
-      return null;
+      return { diffResult: null, error };
     }
 
     const changes = diffJson(leftParsed.parsed, rightParsed.parsed);
-    return {
+    return { error, diffResult: {
       changes,
       leftFormatted: leftParsed.formatted,
       rightFormatted: rightParsed.formatted,
       hasDifferences: changes.some(c => c.added || c.removed),
-    };
+    } };
   }, [leftJson, rightJson, parseAndFormat, ignoreKeyOrder]);
 
   const handleClear = (side: 'left' | 'right' | 'both') => {
@@ -119,7 +91,6 @@ export default function JsonDiff() {
     if (side === 'right' || side === 'both') {
       setRightJson('');
     }
-    setError({});
   };
 
   const handlePaste = async (side: 'left' | 'right') => {
@@ -157,37 +128,6 @@ export default function JsonDiff() {
       // Invalid JSON, do nothing
     }
   };
-
-  // Sync scroll between textarea and syntax highlighter
-  const handleScroll = useCallback((e: React.UIEvent<HTMLTextAreaElement>, containerRef: React.RefObject<HTMLDivElement | null>) => {
-    if (containerRef.current) {
-      const pre = containerRef.current.querySelector('pre');
-      if (pre) {
-        pre.scrollTop = e.currentTarget.scrollTop;
-        pre.scrollLeft = e.currentTarget.scrollLeft;
-      }
-    }
-  }, []);
-
-  // Handle tab key for indentation
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>, side: 'left' | 'right') => {
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const textarea = e.currentTarget;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const value = textarea.value;
-      const newValue = value.substring(0, start) + '  ' + value.substring(end);
-      if (side === 'left') {
-        setLeftJson(newValue);
-      } else {
-        setRightJson(newValue);
-      }
-      setTimeout(() => {
-        textarea.selectionStart = textarea.selectionEnd = start + 2;
-      }, 0);
-    }
-  }, []);
 
   const renderSideBySide = (changes: Change[]) => {
     const leftLines: { text: string; type: 'normal' | 'removed' }[] = [];
@@ -327,7 +267,7 @@ export default function JsonDiff() {
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-h-0 flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-base font-semibold text-text-primary">JSON Diff</h3>
         <div className="flex items-center gap-3">
@@ -404,61 +344,8 @@ export default function JsonDiff() {
               </Tooltip>
             </div>
           </div>
-          <div
-            ref={leftContainerRef}
-            className={`h-32 relative rounded border focus-within:ring-1 bg-dark-bg overflow-hidden ${
-              error.left ? 'border-accent-error focus-within:ring-accent-error' : 'border-dark-border focus-within:ring-accent-primary'
-            }`}
-          >
-            {/* Syntax highlighted background */}
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              <SyntaxHighlighter
-                language="json"
-                style={darkCodeTheme}
-                customStyle={{
-                  margin: 0,
-                  padding: '12px',
-                  background: 'transparent',
-                  height: '100%',
-                  overflow: 'hidden',
-                }}
-                codeTagProps={{
-                  style: {
-                    fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-                    fontSize: '13px',
-                    lineHeight: '1.4',
-                  }
-                }}
-              >
-                {leftJson || ' '}
-              </SyntaxHighlighter>
-            </div>
-            {/* Transparent textarea for editing */}
-            <textarea
-              value={leftJson}
-              onChange={(e) => setLeftJson(e.target.value)}
-              onScroll={(e) => handleScroll(e, leftContainerRef)}
-              onKeyDown={(e) => handleKeyDown(e, 'left')}
-              className="relative w-full h-full bg-transparent text-transparent caret-white resize-none font-mono outline-none"
-              style={{
-                padding: '12px',
-                fontSize: '13px',
-                lineHeight: '1.4',
-                fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-                caretColor: '#58a6ff',
-              }}
-              spellCheck={false}
-            />
-            {/* Placeholder when empty */}
-            {!leftJson && (
-              <div
-                className="absolute top-3 left-3 text-text-tertiary font-mono pointer-events-none"
-                style={{ fontSize: '13px', lineHeight: '1.4' }}
-              >
-                Paste left JSON here...
-              </div>
-            )}
-          </div>
+          <JsonEditor label="Left JSON" value={leftJson} onChange={setLeftJson}
+            placeholder="Paste left JSON here..." className="h-40 min-h-[100px] max-h-[40vh] resize-y" />
           {error.left && (
             <p className="mt-1 text-xs text-accent-error">{error.left}</p>
           )}
@@ -506,61 +393,8 @@ export default function JsonDiff() {
               </Tooltip>
             </div>
           </div>
-          <div
-            ref={rightContainerRef}
-            className={`h-32 relative rounded border focus-within:ring-1 bg-dark-bg overflow-hidden ${
-              error.right ? 'border-accent-error focus-within:ring-accent-error' : 'border-dark-border focus-within:ring-accent-primary'
-            }`}
-          >
-            {/* Syntax highlighted background */}
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              <SyntaxHighlighter
-                language="json"
-                style={darkCodeTheme}
-                customStyle={{
-                  margin: 0,
-                  padding: '12px',
-                  background: 'transparent',
-                  height: '100%',
-                  overflow: 'hidden',
-                }}
-                codeTagProps={{
-                  style: {
-                    fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-                    fontSize: '13px',
-                    lineHeight: '1.4',
-                  }
-                }}
-              >
-                {rightJson || ' '}
-              </SyntaxHighlighter>
-            </div>
-            {/* Transparent textarea for editing */}
-            <textarea
-              value={rightJson}
-              onChange={(e) => setRightJson(e.target.value)}
-              onScroll={(e) => handleScroll(e, rightContainerRef)}
-              onKeyDown={(e) => handleKeyDown(e, 'right')}
-              className="relative w-full h-full bg-transparent text-transparent caret-white resize-none font-mono outline-none"
-              style={{
-                padding: '12px',
-                fontSize: '13px',
-                lineHeight: '1.4',
-                fontFamily: 'JetBrains Mono, Fira Code, Monaco, Consolas, monospace',
-                caretColor: '#58a6ff',
-              }}
-              spellCheck={false}
-            />
-            {/* Placeholder when empty */}
-            {!rightJson && (
-              <div
-                className="absolute top-3 left-3 text-text-tertiary font-mono pointer-events-none"
-                style={{ fontSize: '13px', lineHeight: '1.4' }}
-              >
-                Paste right JSON here...
-              </div>
-            )}
-          </div>
+          <JsonEditor label="Right JSON" value={rightJson} onChange={setRightJson}
+            placeholder="Paste right JSON here..." className="h-40 min-h-[100px] max-h-[40vh] resize-y" />
           {error.right && (
             <p className="mt-1 text-xs text-accent-error">{error.right}</p>
           )}

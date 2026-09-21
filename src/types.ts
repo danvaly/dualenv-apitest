@@ -8,8 +8,27 @@ export interface Environment {
   id: string;
   name: string;
   variables: EnvironmentVariable[];
+  auth?: AuthConfig;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ExtractionRule {
+  id: string;
+  path: string; // e.g. $.data.id
+  variable: string;
+  enabled: boolean;
+}
+
+export interface RequestScripts {
+  pre?: string;
+  post?: string;
+}
+
+export interface ScriptTestResult {
+  name: string;
+  pass: boolean;
+  error?: string;
 }
 
 export interface ApiRequest {
@@ -17,6 +36,58 @@ export interface ApiRequest {
   endpoint: string;
   body?: string;
   headers?: Record<string, string>;
+  bodyType?: 'none' | 'json' | 'text' | 'xml' | 'yaml' | 'form-data' | 'form-urlencoded' | 'graphql' | 'edn' | 'file';
+  auth?: AuthConfig;
+  /** 'inherit' uses the environment's auth config */
+  scripts?: RequestScripts;
+  extractions?: ExtractionRule[];
+}
+
+export interface JwtFetchConfig {
+  tokenUrl: string;
+  grantType: 'client_credentials' | 'password';
+  clientId: string;
+  clientSecret: string;
+  scope: string;
+  username: string;
+  password: string;
+}
+
+export interface JwtSignConfig {
+  alg: 'HS256' | 'HS384' | 'HS512';
+  secret: string;
+  header: string; // JSON
+  payload: string; // JSON
+  expiresInSec: number; // 0 = no exp claim
+}
+
+export interface JwtAuthConfig {
+  mode: 'fetch' | 'sign';
+  fetch: JwtFetchConfig;
+  sign: JwtSignConfig;
+}
+
+export interface CibaAuthConfig {
+  authEndpoint: string; // backchannel authentication endpoint
+  tokenEndpoint: string;
+  clientId: string;
+  clientSecret: string;
+  scope: string;
+  loginHint: string;
+  bindingMessage: string;
+  pollIntervalSec: number;
+  expiresInSec: number; // requested expiry of the auth_req_id
+}
+
+export interface AuthConfig {
+  type: 'none' | 'bearer' | 'basic' | 'jwt' | 'ciba' | 'inherit';
+  token?: string;
+  username?: string;
+  password?: string;
+  jwt?: JwtAuthConfig;
+  ciba?: CibaAuthConfig;
+  /** epoch ms when the current token expires (0/undefined = unknown) */
+  tokenExpiresAt?: number;
 }
 
 export interface ApiResponse {
@@ -27,6 +98,7 @@ export interface ApiResponse {
   error?: string;
   timestamp: number;
   duration: number;
+  tests?: ScriptTestResult[];
 }
 
 export interface ComparisonResult {
@@ -81,6 +153,8 @@ export interface DiffSettings {
 }
 
 export interface OpenTab {
+  selectedEnv1Id?: string | null;
+  selectedEnv2Id?: string | null;
   id: string;
   title: string;
   request: ApiRequest;
