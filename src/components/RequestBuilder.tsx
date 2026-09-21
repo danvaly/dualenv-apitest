@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import JsonEditor from './JsonEditor';
 import AuthForm from './AuthForm';
 import type { ApiRequest, ExtractionRule } from '../types';
+import { ENV_STYLES, methodColor } from '../utils/envColors';
 import Tooltip from './Tooltip';
 
 interface RequestBuilderProps {
@@ -25,6 +26,7 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
   const [editingHeaderNewValue, setEditingHeaderNewValue] = useState('');
   const [bodyError, setBodyError] = useState<string | null>(null);
   const [paramDrafts, setParamDrafts] = useState<Array<[string, string]>>([]);
+  const [showCurlMenu, setShowCurlMenu] = useState(false);
   const bodyType = request.bodyType || (request.body ? 'json' : 'none');
   const queryEntries = useMemo(() => {
     const [, query = ''] = request.endpoint.split('?');
@@ -122,17 +124,6 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
     setEditingHeaderNewValue('');
   };
 
-  const getMethodColor = (method: string) => {
-    switch (method) {
-      case 'GET': return 'text-method-get';
-      case 'POST': return 'text-method-post';
-      case 'PUT': return 'text-method-put';
-      case 'PATCH': return 'text-method-patch';
-      case 'DELETE': return 'text-method-delete';
-      default: return 'text-text-primary';
-    }
-  };
-
   const formatBody = () => {
     setBodyError(null);
     try {
@@ -153,7 +144,7 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
           <select
             value={request.method}
             onChange={(e) => onChange({ ...request, method: e.target.value as ApiRequest['method'] })}
-            className={`input w-20 text-xs font-semibold ${getMethodColor(request.method)}`}
+            className={`input w-20 text-xs font-semibold ${methodColor(request.method)}`}
           >
             <option value="GET" className="text-method-get">GET</option>
             <option value="POST" className="text-method-post">POST</option>
@@ -196,47 +187,50 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
             </button>
           )}
           {onShowCurl && (
-            <div className="flex gap-1">
-              {isSingleMode ? (
-                // Single environment mode - show one button
-                <Tooltip content="Show cURL command">
-                  <button
-                    onClick={() => onShowCurl(singleEnvIndex || 1)}
-                    className="btn text-xs px-2"
-                  >
-                    cURL
-                  </button>
-                </Tooltip>
-              ) : (
-                // Dual environment mode - show both buttons
-                <>
-                  <Tooltip content="Show cURL for Environment 1">
-                    <button
-                      onClick={() => onShowCurl(1)}
-                      className="btn text-xs px-2"
-                    >
-                      cURL 1
-                    </button>
-                  </Tooltip>
-                  <Tooltip content="Show cURL for Environment 2">
-                    <button
-                      onClick={() => onShowCurl(2)}
-                      className="btn text-xs px-2"
-                    >
-                      cURL 2
-                    </button>
-                  </Tooltip>
-                </>
-              )}
-            </div>
+            isSingleMode ? (
+              <Tooltip content="Show cURL command">
+                <button onClick={() => onShowCurl(singleEnvIndex || 1)} className="btn text-xs px-2">cURL</button>
+              </Tooltip>
+            ) : (
+              <div className="relative">
+                <button
+                  onClick={() => setShowCurlMenu(v => !v)}
+                  className="btn text-xs px-2 flex items-center gap-1"
+                  aria-haspopup="menu"
+                  aria-expanded={showCurlMenu}
+                  title="Show cURL command"
+                >
+                  cURL
+                  <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                </button>
+                {showCurlMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowCurlMenu(false)} />
+                    <div role="menu" className="absolute right-0 z-50 mt-1 w-44 rounded-md border border-dark-border bg-dark-bg-secondary p-1 shadow-xl">
+                      {([1, 2] as const).map(envIndex => (
+                        <button
+                          key={envIndex}
+                          role="menuitem"
+                          className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-text-primary hover:bg-dark-bg-tertiary"
+                          onClick={() => { setShowCurlMenu(false); onShowCurl(envIndex); }}
+                        >
+                          <span className={`w-2 h-2 rounded-full ${ENV_STYLES[envIndex].dot}`} aria-hidden="true" />
+                          <span className={ENV_STYLES[envIndex].text}>{envIndex === 1 ? 'Main' : 'Comparison'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )
           )}
         </div>
 
         {resolvedUrls && (resolvedUrls.env1 || resolvedUrls.env2) && (
           <div className="rounded border border-dark-border/70 bg-dark-bg-tertiary/40 px-2 py-1.5 text-[10px] text-text-muted space-y-0.5" title="Variables are substituted when the request is sent">
             <div className="font-medium text-text-secondary">Resolved destination</div>
-            {resolvedUrls.env1 && <div className="truncate"><span className="text-accent-primary">Main</span> · {resolvedUrls.env1}</div>}
-            {resolvedUrls.env2 && <div className="truncate"><span className="text-accent-primary">Comparison</span> · {resolvedUrls.env2}</div>}
+            {resolvedUrls.env1 && <div className="truncate"><span className={ENV_STYLES[1].text}>Main</span> · {resolvedUrls.env1}</div>}
+            {resolvedUrls.env2 && <div className="truncate"><span className={ENV_STYLES[2].text}>Comparison</span> · {resolvedUrls.env2}</div>}
           </div>
         )}
 

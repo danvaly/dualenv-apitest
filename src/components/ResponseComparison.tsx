@@ -3,6 +3,7 @@ import type { ApiResponse } from '../types';
 import * as Diff from 'diff';
 import JsonDisplay from './JsonDisplay';
 import Tooltip from './Tooltip';
+import { ENV_STYLES } from '../utils/envColors';
 
 interface ResponseComparisonProps {
   env1Name: string;
@@ -416,10 +417,28 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
         <div className="flex items-center justify-between px-2 py-1.5 bg-[#161b22] border-b border-[#30363d]">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-[#c9d1d9]">Diff View</span>
+            {diffStats.added === 0 && diffStats.removed === 0 ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#3fb950]/15 text-[#3fb950] border border-[#3fb950]/30">
+                ✓ Responses identical
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#f85149]/15 text-[#f85149] border border-[#f85149]/30">
+                {diffStats.added + diffStats.removed} changed lines
+              </span>
+            )}
             <div className="flex items-center gap-1.5 text-xs">
               <span className="text-[#3fb950]">+{diffStats.added}</span>
               <span className="text-[#f85149]">-{diffStats.removed}</span>
             </div>
+          </div>
+          <div className="flex items-center gap-2 text-[10px]">
+            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${ENV_STYLES[1].border} ${ENV_STYLES[1].bg} ${ENV_STYLES[1].text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${ENV_STYLES[1].dot}`} />{env1Name}
+            </span>
+            <span className="text-text-muted">vs</span>
+            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${ENV_STYLES[2].border} ${ENV_STYLES[2].bg} ${ENV_STYLES[2].text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${ENV_STYLES[2].dot}`} />{env2Name}
+            </span>
           </div>
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-1.5 text-xs text-[#8b949e] cursor-pointer" title="When enabled, keys and array elements are sorted before comparison, ignoring positional differences">
@@ -592,10 +611,15 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
   }
 
   // Render single environment response panel
-  const renderSingleResponsePanel = (response: ApiResponse | null, envName: string, loading: boolean, envIndex: 1 | 2) => (
-    <div className="card p-2">
+  const renderSingleResponsePanel = (response: ApiResponse | null, envName: string, loading: boolean, envIndex: 1 | 2) => {
+    const envStyle = ENV_STYLES[envIndex];
+    return (
+    <div className={`card p-2 border-t-2 ${envStyle.border}`}>
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-xs font-semibold text-text-primary">{envName}</h3>
+        <h3 className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
+          <span className={`w-2 h-2 rounded-full ${envStyle.dot}`} aria-hidden="true" />
+          <span className={envStyle.text}>{envName}</span>
+        </h3>
         {onRerun && (
           <button
             onClick={() => onRerun(envIndex)}
@@ -633,7 +657,8 @@ const ResponseComparison: React.FC<ResponseComparisonProps> = ({
         renderResponse(response)
       )}
     </div>
-  );
+    );
+  };
 
   // Single mode - show only one response panel
   if (singleMode && singleEnvIndex) {

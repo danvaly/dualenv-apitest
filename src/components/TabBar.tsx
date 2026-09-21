@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { OpenTab } from '../types';
 import ContextMenu from './ContextMenu';
+import { METHOD_COLORS } from '../utils/envColors';
 
 interface TabBarProps {
   tabs: OpenTab[];
@@ -11,14 +12,20 @@ interface TabBarProps {
   onCloseAllTabs: () => void;
   onNewTab: () => void;
 }
-const METHOD_COLORS: Record<string, string> = {
-  GET: 'text-accent-success', POST: 'text-accent-primary', PUT: 'text-yellow-500',
-  PATCH: 'text-orange-500', DELETE: 'text-accent-error',
-};
 
 export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onCloseOtherTabs, onCloseAllTabs, onNewTab }: TabBarProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const check = () => setOverflowing(list.scrollWidth > list.clientWidth + 1);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [tabs]);
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [activeTabId]);
@@ -63,10 +70,12 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onC
         ))}
       </div>
       <button onClick={onNewTab} aria-label="New tab" title="New tab" className="px-3 py-2 hover:bg-dark-surface shrink-0 text-text-secondary">+</button>
-      <select aria-label="Switch request tab" value={activeTabId || ''} onChange={e => onSelectTab(e.target.value)}
-        className="input w-32 mr-2 shrink-0" title="All open requests">
-        {tabs.map(tab => <option key={tab.id} value={tab.id}>{tab.isDirty ? '• ' : ''}{tab.request.method} {tab.title}</option>)}
-      </select>
+      {overflowing && (
+        <select aria-label="Switch request tab" value={activeTabId || ''} onChange={e => onSelectTab(e.target.value)}
+          className="input w-32 mr-2 shrink-0" title="All open requests">
+          {tabs.map(tab => <option key={tab.id} value={tab.id}>{tab.isDirty ? '• ' : ''}{tab.request.method} {tab.title}</option>)}
+        </select>
+      )}
       {menu && (
         <ContextMenu
           x={menu.x}
