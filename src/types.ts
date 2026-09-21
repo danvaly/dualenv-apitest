@@ -18,12 +18,54 @@ export interface ApiRequest {
   body?: string;
   headers?: Record<string, string>;
   bodyType?: 'none' | 'json' | 'text' | 'xml' | 'yaml' | 'form-data' | 'form-urlencoded' | 'graphql' | 'edn' | 'file';
-  auth?: {
-    type: 'none' | 'bearer' | 'basic';
-    token?: string;
-    username?: string;
-    password?: string;
-  };
+  auth?: AuthConfig;
+}
+
+export interface JwtFetchConfig {
+  tokenUrl: string;
+  grantType: 'client_credentials' | 'password';
+  clientId: string;
+  clientSecret: string;
+  scope: string;
+  username: string;
+  password: string;
+}
+
+export interface JwtSignConfig {
+  alg: 'HS256' | 'HS384' | 'HS512';
+  secret: string;
+  header: string; // JSON
+  payload: string; // JSON
+  expiresInSec: number; // 0 = no exp claim
+}
+
+export interface JwtAuthConfig {
+  mode: 'fetch' | 'sign';
+  fetch: JwtFetchConfig;
+  sign: JwtSignConfig;
+}
+
+export interface CibaAuthConfig {
+  authEndpoint: string; // backchannel authentication endpoint
+  tokenEndpoint: string;
+  clientId: string;
+  clientSecret: string;
+  scope: string;
+  loginHint: string;
+  bindingMessage: string;
+  pollIntervalSec: number;
+  expiresInSec: number; // requested expiry of the auth_req_id
+}
+
+export interface AuthConfig {
+  type: 'none' | 'bearer' | 'basic' | 'jwt' | 'ciba';
+  token?: string;
+  username?: string;
+  password?: string;
+  jwt?: JwtAuthConfig;
+  ciba?: CibaAuthConfig;
+  /** epoch ms when the current token expires (0/undefined = unknown) */
+  tokenExpiresAt?: number;
 }
 
 export interface ApiResponse {
