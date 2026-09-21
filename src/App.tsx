@@ -12,8 +12,11 @@ import UpdateNotification from './components/UpdateNotification';
 import ConsolePanel from './components/ConsolePanel';
 import SettingsPage from './components/SettingsPage';
 import ToolsPage from './components/ToolsPage';
+import CollectionRunner from './components/CollectionRunner';
 import Tooltip from './components/Tooltip';
-import type { Environment, EnvironmentVariable, ApiRequest, ApiResponse, ComparisonResult, Folder, SavedRequest, RequestCollection, OpenTab, PanelSizes, AppConfig, HistoryEntry, HistorySettings, ProxySettings, ConsoleLogEntry } from './types';
+import type { Environment, EnvironmentVariable, ApiRequest, ApiResponse, AuthConfig, ComparisonResult, Folder, SavedRequest, RequestCollection, OpenTab, PanelSizes, AppConfig, HistoryEntry, HistorySettings, ProxySettings, ConsoleLogEntry } from './types';
+import { authorizationHeader, ensureFreshAuth } from './utils/auth';
+import { extractPath, runScript } from './utils/scripting';
 
 const STORAGE_KEY = 'dual-env-tester-config';
 
@@ -109,12 +112,26 @@ const substituteVariables = (text: string, variables: EnvironmentVariable[]): st
   return result;
 };
 
+const mergeEnvVariables = (env: Environment, changes: Record<string, string>): Environment => {
+  const variables = [...env.variables];
+  for (const [key, value] of Object.entries(changes)) {
+    const index = variables.findIndex(v => v.key === key);
+    if (index >= 0) variables[index] = { ...variables[index], value, enabled: true };
+    else variables.push({ key, value, enabled: true });
+  }
+  return { ...env, variables };
+};
+
+const authCacheKey = (request: ApiRequest, env: Environment | null): string =>
+  JSON.stringify([request.auth?.type === 'inherit' ? env?.auth : request.auth, env?.id]);
+
 function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [configLoaded, setConfigLoaded] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mainContentRef = useRef<HTMLDivElement>(null);
   const requestAbortRef = useRef<AbortController | null>(null);
+  const tokenCacheRef = useRef(new Map<string, AuthConfig>());
 
   const [showEnvConfig, setShowEnvConfig] = useState(false);
   const [curlModal, setCurlModal] = useState<{ isOpen: boolean; curlCommand: string; envName: string }>({
@@ -126,6 +143,7 @@ function App() {
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [showSettingsPage, setShowSettingsPage] = useState(false);
+  const [showRunner, setShowRunner] = useState(false);
   const [showToolsPage, setShowToolsPage] = useState(false);
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLogEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
@@ -279,6 +297,12 @@ function App() {
   }, [saveConfig]);
 
   // Derived state
+  const applyEnvVariableChanges = useCallback((envId: string, changes: Record<string, string>) => {
+    updateConfig(current => ({
+      environments: current.environments.map(env =>
+        env.id === envId ? { ...mergeEnvVariables(env, changes), updatedAt: Date.now() } : env),
+    }));
+  }, [updateConfig]);
   const environments = config?.environments || [];
   const connectionTab = config?.openTabs.find(t => t.id === config.activeTabId) || config?.openTabs[0];
   const selectedEnv1Id = connectionTab?.selectedEnv1Id === undefined ? config?.selectedEnv1Id : connectionTab.selectedEnv1Id;
@@ -817,6 +841,22 @@ function App() {
     setPendingCloseTabId(null);
   }, []);
 
+  const handleCloseOtherTabs = useCallback((tabId: string) => {
+    const dirtyOthers = openTabs.filter((t: OpenTab) => t.id !== tabId && t.isDirty);
+    if (dirtyOthers.length && !window.confirm(`${dirtyOthers.length} tab(s) have unsaved changes. Close them anyway?`)) return;
+    updateConfig(prev => ({
+      openTabs: prev.openTabs.filter(t => t.id === tabId),
+      activeTabId: tabId,
+    }));
+  }, [openTabs, updateConfig]);
+
+  const handleCloseAllTabs = useCallback(() => {
+    const dirty = openTabs.filter((t: OpenTab) => t.isDirty);
+    if (dirty.length && !window.confirm(`${dirty.length} tab(s) have unsaved changes. Close them anyway?`)) return;
+    const fresh = createDefaultTab();
+    updateConfig({ openTabs: [fresh], activeTabId: fresh.id });
+  }, [openTabs, updateConfig]);
+
   // Save and close tab
   const saveAndCloseTab = useCallback(() => {
     if (pendingCloseTabId) {
@@ -1198,10 +1238,72 @@ function App() {
   };
 
   const sendRequest = async (request: ApiRequest, env: Environment | null, signal?: AbortSignal): Promise<ApiResponse> => {
-    if (requestSettings.mode === 'curl') {
-      return sendRequestViaCurl(request, env, signal);
+    // 1. Pre-request script: may set variables and modify the request
+    let effectiveRequest = request;
+    let effectiveEnv = env;
+    if (request.scripts?.pre?.trim()) {
+      const variables = Object.fromEntries((env?.variables || []).filter(v => v.enabled).map(v => [v.key, v.value]));
+      const outcome = await runScript({ code: request.scripts.pre, phase: 'pre', request, variables });
+      outcome.logs.forEach(log => addConsoleLog('info', `[pre-script] ${log}`));
+      effectiveRequest = outcome.request;
+      if (env && Object.keys(outcome.variableChanges).length) {
+        applyEnvVariableChanges(env.id, outcome.variableChanges);
+        effectiveEnv = mergeEnvVariables(env, outcome.variableChanges);
+      }
     }
-    return sendRequestViaFetch(request, env, signal);
+
+    // 2. Auth: resolve inherited config, substitute variables, refresh expired JWT/CIBA tokens
+    const auth = await ensureFreshAuth(
+      tokenCacheRef.current.get(authCacheKey(effectiveRequest, effectiveEnv)) || effectiveRequest.auth,
+      effectiveEnv,
+      message => addConsoleLog('info', `[auth] ${message}`),
+    );
+    if (auth) {
+      tokenCacheRef.current.set(authCacheKey(effectiveRequest, effectiveEnv), auth);
+      const header = authorizationHeader(auth);
+      if (header) {
+        const headers = { ...(effectiveRequest.headers || {}) };
+        delete headers.Authorization;
+        delete headers.authorization;
+        effectiveRequest = { ...effectiveRequest, headers: { ...headers, Authorization: header } };
+      }
+    }
+
+    // 3. Send
+    const response = requestSettings.mode === 'curl'
+      ? await sendRequestViaCurl(effectiveRequest, effectiveEnv, signal)
+      : await sendRequestViaFetch(effectiveRequest, effectiveEnv, signal);
+
+    // 4. Extractions: save response fields into environment variables (chained requests)
+    if (env && request.extractions?.length) {
+      const changes: Record<string, string> = {};
+      for (const rule of request.extractions) {
+        if (!rule.enabled || !rule.path.trim() || !rule.variable.trim()) continue;
+        const value = extractPath(response.data, rule.path);
+        if (value !== undefined) {
+          changes[rule.variable] = typeof value === 'string' ? value : JSON.stringify(value);
+          addConsoleLog('info', `[extract] ${rule.path} → {{${rule.variable}}}`);
+        } else {
+          addConsoleLog('error', `[extract] path not found: ${rule.path}`);
+        }
+      }
+      if (Object.keys(changes).length) applyEnvVariableChanges(env.id, changes);
+    }
+
+    // 5. Response script: assertions and variable extraction
+    if (request.scripts?.post?.trim()) {
+      const variables = Object.fromEntries((effectiveEnv?.variables || []).filter(v => v.enabled).map(v => [v.key, v.value]));
+      const outcome = await runScript({ code: request.scripts.post, phase: 'post', request: effectiveRequest, variables, response });
+      outcome.logs.forEach(log => addConsoleLog('info', `[post-script] ${log}`));
+      outcome.tests.forEach(test =>
+        addConsoleLog(test.pass ? 'info' : 'error', `[test] ${test.pass ? '✓' : '✗'} ${test.name}`, test.error));
+      response.tests = outcome.tests;
+      if (env && Object.keys(outcome.variableChanges).length) {
+        applyEnvVariableChanges(env.id, outcome.variableChanges);
+      }
+    }
+
+    return response;
   };
 
   const handleSendRequests = async () => {
@@ -1308,6 +1410,23 @@ function App() {
     updateActiveTabComparison({ loading: false, loading1: false, loading2: false });
   };
 
+  const runCollectionRequest = async (request: ApiRequest): Promise<{ env1: ApiResponse | null; env2: ApiResponse | null }> => {
+    const toErrorResponse = (error: unknown): ApiResponse => ({
+      status: 0,
+      statusText: 'Error',
+      data: null,
+      headers: {},
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: Date.now(),
+      duration: 0,
+    });
+    const [env1, env2] = await Promise.all([
+      selectedEnv1 ? sendRequest(request, selectedEnv1).catch(toErrorResponse) : Promise.resolve(null),
+      selectedEnv2 ? sendRequest(request, selectedEnv2).catch(toErrorResponse) : Promise.resolve(null),
+    ]);
+    return { env1, env2 };
+  };
+
   const handleRerunRequest = async (envIndex: 1 | 2) => {
     if (!activeTab) return;
 
@@ -1411,6 +1530,8 @@ function App() {
           activeTabId={activeTabId}
           onSelectTab={handleSelectTab}
           onCloseTab={handleCloseTabWithConfirm}
+          onCloseOtherTabs={handleCloseOtherTabs}
+          onCloseAllTabs={handleCloseAllTabs}
           onNewTab={handleNewTab}
         />
 
@@ -1439,6 +1560,18 @@ function App() {
                       {history.length}
                     </span>
                   )}
+                </button>
+                <button
+                  onClick={() => setShowRunner(true)}
+                  disabled={!activeCollection || activeCollection.requests.length === 0}
+                  className="btn text-xs flex items-center gap-1 disabled:opacity-50"
+                  title="Run all requests in the active collection"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-4.197-2.587A1 1 0 009 9.438v5.124a1 1 0 001.555.832l4.197-2.587a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Run
                 </button>
                 <button
                   onClick={() => setShowToolsPage(true)}
@@ -1764,6 +1897,17 @@ function App() {
         isOpen={showToolsPage}
         onClose={() => setShowToolsPage(false)}
       />
+
+      {/* Collection Runner Modal */}
+      {showRunner && activeCollection && (
+        <CollectionRunner
+          collection={activeCollection}
+          env1Name={selectedEnv1?.name || null}
+          env2Name={selectedEnv2?.name || null}
+          runRequest={runCollectionRequest}
+          onClose={() => setShowRunner(false)}
+        />
+      )}
     </div>
   );
 }

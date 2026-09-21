@@ -23,6 +23,22 @@ Available for mac, linux and windows
 - **Custom Headers** - Add any headers with variable substitution support
 - **Tabs** - Keep multiple requests open and switch between them
 
+### Authentication
+- **Bearer / Basic** - Simple token and username/password auth
+- **JWT Token** - Fetch tokens via OAuth2 (client credentials or password grant) or sign JWTs locally (HS256/384/512)
+- **CIBA** - Full Client Initiated Backchannel Authentication flow with token polling
+- **Per-Environment Auth** - Configure auth once per environment; requests inherit it
+- **Auto-Refresh** - Expired JWT/CIBA tokens are refreshed automatically before sending
+
+### Scripting & Chaining
+- **Pre-Request Scripts** - JavaScript sandbox with `pm.variables.get/set()` and mutable `request`
+- **Response Scripts** - Assertions via `pm.test()` / `pm.expect()` with results in the console
+- **Response Extraction** - Save response fields (e.g. `$.data.id`) into environment variables for chained requests
+
+### Collection Runner
+- **Bulk Execution** - Run all requests in a collection sequentially with optional delay
+- **Summary Report** - Status codes, timing, test results, and cross-environment match per request
+
 ### Response Comparison
 - **Side-by-Side View** - See responses from both environments simultaneously
 - **Visual Diff** - GitHub-style diff with additions, removals, and moved lines

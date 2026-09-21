@@ -1,11 +1,14 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { OpenTab } from '../types';
+import ContextMenu from './ContextMenu';
 
 interface TabBarProps {
   tabs: OpenTab[];
   activeTabId: string | null;
   onSelectTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => void;
+  onCloseOtherTabs: (tabId: string) => void;
+  onCloseAllTabs: () => void;
   onNewTab: () => void;
 }
 const METHOD_COLORS: Record<string, string> = {
@@ -13,8 +16,9 @@ const METHOD_COLORS: Record<string, string> = {
   PATCH: 'text-orange-500', DELETE: 'text-accent-error',
 };
 
-export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab }: TabBarProps) {
+export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onCloseOtherTabs, onCloseAllTabs, onNewTab }: TabBarProps) {
   const listRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [activeTabId]);
@@ -30,6 +34,10 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
               tabIndex={activeTabId === tab.id ? 0 : -1}
               title={`${tab.request.method} ${tab.request.endpoint || tab.title}${tab.isDirty ? ' (unsaved changes)' : ''}`}
               onClick={() => onSelectTab(tab.id)}
+              onContextMenu={event => {
+                event.preventDefault();
+                setMenu({ x: event.clientX, y: event.clientY, tabId: tab.id });
+              }}
               onKeyDown={event => {
                 let next = index;
                 if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
@@ -59,6 +67,19 @@ export default function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onN
         className="input w-32 mr-2 shrink-0" title="All open requests">
         {tabs.map(tab => <option key={tab.id} value={tab.id}>{tab.isDirty ? '• ' : ''}{tab.request.method} {tab.title}</option>)}
       </select>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          label={tabs.find(t => t.id === menu.tabId)?.title || 'Tab'}
+          onClose={() => setMenu(null)}
+          actions={[
+            { label: 'Close Tab', onSelect: () => onCloseTab(menu.tabId) },
+            { label: 'Close Others', onSelect: () => onCloseOtherTabs(menu.tabId), disabled: tabs.length <= 1 },
+            { label: 'Close All', onSelect: () => onCloseAllTabs(), destructive: true },
+          ]}
+        />
+      )}
     </div>
   );
 }

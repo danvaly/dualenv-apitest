@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import JsonEditor from './JsonEditor';
-import type { ApiRequest, CibaAuthConfig, JwtAuthConfig } from '../types';
-import { fetchCibaToken, fetchOAuthToken, signJwt } from '../utils/auth';
+import AuthForm from './AuthForm';
+import type { ApiRequest, ExtractionRule } from '../types';
 import Tooltip from './Tooltip';
 
 interface RequestBuilderProps {
@@ -17,7 +17,7 @@ interface RequestBuilderProps {
 }
 
 const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSend, onCancel, loading, resolvedUrls, onShowCurl, isSingleMode, singleEnvIndex }) => {
-  const [activeSection, setActiveSection] = useState<'params' | 'body' | 'auth' | 'headers' | 'scripts' | 'docs'>('body');
+  const [activeSection, setActiveSection] = useState<'params' | 'body' | 'auth' | 'headers' | 'scripts' | 'extract' | 'docs'>('body');
   const [headerKey, setHeaderKey] = useState('');
   const [headerValue, setHeaderValue] = useState('');
   const [editingHeaderKey, setEditingHeaderKey] = useState<string | null>(null);
@@ -47,40 +47,6 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
     }
   };
   const auth = request.auth || { type: 'none' as const };
-  const defaultJwt = (): JwtAuthConfig => ({
-    mode: 'fetch',
-    fetch: { tokenUrl: '', grantType: 'client_credentials', clientId: '', clientSecret: '', scope: '', username: '', password: '' },
-    sign: { alg: 'HS256', secret: '', header: '', payload: '', expiresInSec: 3600 },
-  });
-  const defaultCiba = (): CibaAuthConfig => ({
-    authEndpoint: '', tokenEndpoint: '', clientId: '', clientSecret: '', scope: 'openid',
-    loginHint: '', bindingMessage: '', pollIntervalSec: 5, expiresInSec: 120,
-  });
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authStatus, setAuthStatus] = useState<string | null>(null);
-  const obtainToken = async () => {
-    setAuthBusy(true);
-    setAuthStatus(null);
-    try {
-      let result: { token: string; expiresAt?: number };
-      if (auth.type === 'jwt') {
-        const jwt = auth.jwt || defaultJwt();
-        result = jwt.mode === 'sign'
-          ? { token: await signJwt(jwt.sign), expiresAt: jwt.sign.expiresInSec > 0 ? Date.now() + jwt.sign.expiresInSec * 1000 : undefined }
-          : await fetchOAuthToken(jwt.fetch);
-      } else if (auth.type === 'ciba') {
-        result = await fetchCibaToken(auth.ciba || defaultCiba(), setAuthStatus);
-      } else {
-        return;
-      }
-      updateAuth({ ...auth, token: result.token, tokenExpiresAt: result.expiresAt });
-      setAuthStatus('Token acquired and applied to the Authorization header.');
-    } catch (error) {
-      setAuthStatus(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAuthBusy(false);
-    }
-  };
   const updateAuth = (next: ApiRequest['auth']) => {
     const headers = { ...(request.headers || {}) };
     delete headers.Authorization;
@@ -275,7 +241,7 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
         )}
 
         <div className="flex items-center gap-1 overflow-x-auto border-b border-dark-border pt-1" role="tablist" aria-label="Request options">
-          {(['params', 'body', 'auth', 'headers', 'scripts', 'docs'] as const).map(section => (
+          {(['params', 'body', 'auth', 'headers', 'scripts', 'extract', 'docs'] as const).map(section => (
             <button key={section} type="button" role="tab" aria-selected={activeSection === section} onClick={() => setActiveSection(section)}
               className={`shrink-0 px-2 py-1 text-[10px] capitalize ${activeSection === section ? 'border-b-2 border-accent-primary text-text-primary' : 'text-text-muted hover:text-text-primary'}`}>
               {section === 'headers' ? `Headers${Object.keys(request.headers || {}).length ? ` (${Object.keys(request.headers || {}).length})` : ''}` : section}
@@ -320,80 +286,37 @@ const RequestBuilder: React.FC<RequestBuilderProps> = ({ request, onChange, onSe
 
         {activeSection === 'auth' && <div className="space-y-2">
           <label className="block text-xs font-medium text-text-secondary">Authentication</label>
-          <select aria-label="Authentication type" value={auth.type} onChange={event => updateAuth({ ...auth, type: event.target.value as NonNullable<ApiRequest['auth']>['type'] })} className="input text-xs">
-            <option value="none">No Auth</option><option value="bearer">Bearer Token</option><option value="basic">Basic Auth</option><option value="jwt">JWT Token</option><option value="ciba">CIBA</option>
-          </select>
-          {auth.type === 'bearer' && <input className="input text-xs" type="password" value={auth.token || ''} placeholder="Bearer token" onChange={event => updateAuth({ ...auth, token: event.target.value })} />}
-          {auth.type === 'basic' && <div className="grid grid-cols-2 gap-1.5"><input className="input text-xs" value={auth.username || ''} placeholder="Username" onChange={event => updateAuth({ ...auth, username: event.target.value })} /><input className="input text-xs" type="password" value={auth.password || ''} placeholder="Password" onChange={event => updateAuth({ ...auth, password: event.target.value })} /></div>}
-          {(auth.type === 'jwt' || auth.type === 'ciba') && (() => {
-            const jwt = auth.jwt || defaultJwt();
-            const ciba = auth.ciba || defaultCiba();
-            const setJwt = (next: JwtAuthConfig) => updateAuth({ ...auth, jwt: next });
-            const setCiba = (next: CibaAuthConfig) => updateAuth({ ...auth, ciba: next });
-            return <div className="space-y-2">
-              {auth.type === 'jwt' && <>
-                <select aria-label="JWT mode" value={jwt.mode} onChange={event => setJwt({ ...jwt, mode: event.target.value as JwtAuthConfig['mode'] })} className="input text-xs">
-                  <option value="fetch">Fetch token (OAuth2)</option>
-                  <option value="sign">Sign JWT locally</option>
-                </select>
-                {jwt.mode === 'fetch' && <>
-                  <input className="input text-xs" value={jwt.fetch.tokenUrl} placeholder="Token URL" onChange={event => setJwt({ ...jwt, fetch: { ...jwt.fetch, tokenUrl: event.target.value } })} />
-                  <select aria-label="Grant type" value={jwt.fetch.grantType} onChange={event => setJwt({ ...jwt, fetch: { ...jwt.fetch, grantType: event.target.value as JwtAuthConfig['fetch']['grantType'] } })} className="input text-xs">
-                    <option value="client_credentials">Client Credentials</option>
-                    <option value="password">Resource Owner Password</option>
-                  </select>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <input className="input text-xs" value={jwt.fetch.clientId} placeholder="Client ID" onChange={event => setJwt({ ...jwt, fetch: { ...jwt.fetch, clientId: event.target.value } })} />
-                    <input className="input text-xs" type="password" value={jwt.fetch.clientSecret} placeholder="Client Secret" onChange={event => setJwt({ ...jwt, fetch: { ...jwt.fetch, clientSecret: event.target.value } })} />
-                  </div>
-                  <input className="input text-xs" value={jwt.fetch.scope} placeholder="Scope (optional)" onChange={event => setJwt({ ...jwt, fetch: { ...jwt.fetch, scope: event.target.value } })} />
-                  {jwt.fetch.grantType === 'password' && <div className="grid grid-cols-2 gap-1.5">
-                    <input className="input text-xs" value={jwt.fetch.username} placeholder="Username" onChange={event => setJwt({ ...jwt, fetch: { ...jwt.fetch, username: event.target.value } })} />
-                    <input className="input text-xs" type="password" value={jwt.fetch.password} placeholder="Password" onChange={event => setJwt({ ...jwt, fetch: { ...jwt.fetch, password: event.target.value } })} />
-                  </div>}
-                </>}
-                {jwt.mode === 'sign' && <>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <select aria-label="JWT algorithm" value={jwt.sign.alg} onChange={event => setJwt({ ...jwt, sign: { ...jwt.sign, alg: event.target.value as JwtAuthConfig['sign']['alg'] } })} className="input text-xs">
-                      <option value="HS256">HS256</option>
-                      <option value="HS384">HS384</option>
-                      <option value="HS512">HS512</option>
-                    </select>
-                    <input className="input text-xs" type="number" min={0} value={jwt.sign.expiresInSec} placeholder="Expires in (sec, 0 = none)" onChange={event => setJwt({ ...jwt, sign: { ...jwt.sign, expiresInSec: Number(event.target.value) || 0 } })} />
-                  </div>
-                  <input className="input text-xs" type="password" value={jwt.sign.secret} placeholder="HMAC secret" onChange={event => setJwt({ ...jwt, sign: { ...jwt.sign, secret: event.target.value } })} />
-                  <textarea className="input text-xs font-mono" rows={2} value={jwt.sign.header} placeholder='Header JSON (optional), e.g. {"kid":"1"}' onChange={event => setJwt({ ...jwt, sign: { ...jwt.sign, header: event.target.value } })} />
-                  <textarea className="input text-xs font-mono" rows={3} value={jwt.sign.payload} placeholder='Payload JSON, e.g. {"sub":"user-1"}' onChange={event => setJwt({ ...jwt, sign: { ...jwt.sign, payload: event.target.value } })} />
-                </>}
-              </>}
-              {auth.type === 'ciba' && <>
-                <input className="input text-xs" value={ciba.authEndpoint} placeholder="Backchannel authentication endpoint" onChange={event => setCiba({ ...ciba, authEndpoint: event.target.value })} />
-                <input className="input text-xs" value={ciba.tokenEndpoint} placeholder="Token endpoint" onChange={event => setCiba({ ...ciba, tokenEndpoint: event.target.value })} />
-                <div className="grid grid-cols-2 gap-1.5">
-                  <input className="input text-xs" value={ciba.clientId} placeholder="Client ID" onChange={event => setCiba({ ...ciba, clientId: event.target.value })} />
-                  <input className="input text-xs" type="password" value={ciba.clientSecret} placeholder="Client Secret" onChange={event => setCiba({ ...ciba, clientSecret: event.target.value })} />
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <input className="input text-xs" value={ciba.scope} placeholder="Scope" onChange={event => setCiba({ ...ciba, scope: event.target.value })} />
-                  <input className="input text-xs" value={ciba.loginHint} placeholder="Login hint (user identifier)" onChange={event => setCiba({ ...ciba, loginHint: event.target.value })} />
-                </div>
-                <input className="input text-xs" value={ciba.bindingMessage} placeholder="Binding message (optional)" onChange={event => setCiba({ ...ciba, bindingMessage: event.target.value })} />
-                <div className="grid grid-cols-2 gap-1.5">
-                  <label className="text-[10px] text-text-muted">Poll interval (s)<input className="input text-xs mt-0.5" type="number" min={1} value={ciba.pollIntervalSec} onChange={event => setCiba({ ...ciba, pollIntervalSec: Number(event.target.value) || 5 })} /></label>
-                  <label className="text-[10px] text-text-muted">Requested expiry (s)<input className="input text-xs mt-0.5" type="number" min={0} value={ciba.expiresInSec} onChange={event => setCiba({ ...ciba, expiresInSec: Number(event.target.value) || 0 })} /></label>
-                </div>
-              </>}
-              <button type="button" disabled={authBusy} onClick={obtainToken} className="btn-primary w-full px-2 py-1 text-xs disabled:opacity-50">
-                {authBusy ? 'Working…' : auth.type === 'jwt' ? (jwt.mode === 'sign' ? 'Generate JWT' : 'Fetch Token') : 'Start CIBA Authentication'}
-              </button>
-              {auth.token && <input className="input text-xs" type="password" readOnly value={auth.token} title={auth.tokenExpiresAt ? `Expires: ${new Date(auth.tokenExpiresAt).toLocaleString()}` : 'Acquired token'} />}
-              {authStatus && <p className="text-[10px] text-text-muted break-all">{authStatus}</p>}
-            </div>;
-          })()}
-          <p className="text-[10px] text-text-muted">Authentication is applied to the Authorization header when the request is sent.</p>
+          <AuthForm auth={auth} onChange={updateAuth} allowInherit />
+          <p className="text-[10px] text-text-muted">Authentication is applied to the Authorization header when the request is sent. JWT/CIBA tokens refresh automatically when expired.</p>
         </div>}
 
-        {activeSection === 'scripts' && <div className="rounded border border-dashed border-dark-border p-4 text-center text-xs text-text-muted">Pre-request and response scripts will be supported here.</div>}
+        {activeSection === 'scripts' && <div className="space-y-2">
+          <label className="block text-xs font-medium text-text-secondary">Pre-request Script</label>
+          <textarea className="input text-xs font-mono" rows={4} value={request.scripts?.pre || ''} spellCheck={false}
+            placeholder="// Runs before sending. Available: pm.variables.get/set, request, console.log&#10;// pm.variables.set('timestamp', Date.now());"
+            onChange={event => onChange({ ...request, scripts: { ...request.scripts, pre: event.target.value } })} />
+          <label className="block text-xs font-medium text-text-secondary">Response Script (tests)</label>
+          <textarea className="input text-xs font-mono" rows={4} value={request.scripts?.post || ''} spellCheck={false}
+            placeholder="// Runs after the response. Available: pm.response, pm.test, pm.expect&#10;// pm.test('status is 200', () => pm.expect(pm.response.status).toBe(200));"
+            onChange={event => onChange({ ...request, scripts: { ...request.scripts, post: event.target.value } })} />
+          <p className="text-[10px] text-text-muted">Variables set via pm.variables.set() are saved into the active environment.</p>
+        </div>}
+
+        {activeSection === 'extract' && <div className="space-y-2">
+          <label className="block text-xs font-medium text-text-secondary">Extract response fields into environment variables</label>
+          {(request.extractions || []).map(rule => (
+            <div key={rule.id} className="flex items-center gap-1.5">
+              <input type="checkbox" aria-label="Enable rule" checked={rule.enabled} onChange={event => onChange({ ...request, extractions: (request.extractions || []).map(r => r.id === rule.id ? { ...r, enabled: event.target.checked } : r) })} />
+              <input className="input text-xs flex-1 font-mono" value={rule.path} placeholder="$.data.id" onChange={event => onChange({ ...request, extractions: (request.extractions || []).map(r => r.id === rule.id ? { ...r, path: event.target.value } : r) })} />
+              <span className="text-text-muted text-xs">→</span>
+              <input className="input text-xs flex-1" value={rule.variable} placeholder="variableName" onChange={event => onChange({ ...request, extractions: (request.extractions || []).map(r => r.id === rule.id ? { ...r, variable: event.target.value } : r) })} />
+              <button type="button" aria-label="Remove rule" className="text-text-muted hover:text-red-400 px-1" onClick={() => onChange({ ...request, extractions: (request.extractions || []).filter(r => r.id !== rule.id) })}>×</button>
+            </div>
+          ))}
+          <button type="button" className="btn-accent px-2 py-1 text-xs" onClick={() => onChange({ ...request, extractions: [...(request.extractions || []), { id: crypto.randomUUID(), path: '', variable: '', enabled: true } as ExtractionRule] })}>+ Add Extraction</button>
+          <p className="text-[10px] text-text-muted">Paths use JSONPath-lite syntax, e.g. $.data.user.id or $.items[0].token</p>
+        </div>}
+
         {activeSection === 'docs' && <div className="rounded border border-dashed border-dark-border p-4 text-center text-xs text-text-muted">Add notes and documentation for this request here.</div>}
 
         {/* Headers */}

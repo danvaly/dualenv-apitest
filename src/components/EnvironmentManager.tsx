@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { Environment, EnvironmentVariable } from '../types';
+import AuthForm from './AuthForm';
 
 interface EnvironmentManagerProps {
   environments: Environment[];
@@ -285,6 +286,15 @@ export default function EnvironmentManager({
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  {/* Authentication */}
+                  <div className="space-y-1 mt-2 pt-2 border-t border-dark-border">
+                    <label className="text-xs text-text-muted">Authentication (used by requests set to "Inherit from Environment")</label>
+                    <AuthForm
+                      auth={env.auth || { type: 'none' }}
+                      onChange={auth => updateEnvironment(env.id, { auth })}
+                    />
                   </div>
 
                   {/* Usage hint */}

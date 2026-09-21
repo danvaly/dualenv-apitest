@@ -8,8 +8,27 @@ export interface Environment {
   id: string;
   name: string;
   variables: EnvironmentVariable[];
+  auth?: AuthConfig;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ExtractionRule {
+  id: string;
+  path: string; // e.g. $.data.id
+  variable: string;
+  enabled: boolean;
+}
+
+export interface RequestScripts {
+  pre?: string;
+  post?: string;
+}
+
+export interface ScriptTestResult {
+  name: string;
+  pass: boolean;
+  error?: string;
 }
 
 export interface ApiRequest {
@@ -19,6 +38,9 @@ export interface ApiRequest {
   headers?: Record<string, string>;
   bodyType?: 'none' | 'json' | 'text' | 'xml' | 'yaml' | 'form-data' | 'form-urlencoded' | 'graphql' | 'edn' | 'file';
   auth?: AuthConfig;
+  /** 'inherit' uses the environment's auth config */
+  scripts?: RequestScripts;
+  extractions?: ExtractionRule[];
 }
 
 export interface JwtFetchConfig {
@@ -58,7 +80,7 @@ export interface CibaAuthConfig {
 }
 
 export interface AuthConfig {
-  type: 'none' | 'bearer' | 'basic' | 'jwt' | 'ciba';
+  type: 'none' | 'bearer' | 'basic' | 'jwt' | 'ciba' | 'inherit';
   token?: string;
   username?: string;
   password?: string;
@@ -76,6 +98,7 @@ export interface ApiResponse {
   error?: string;
   timestamp: number;
   duration: number;
+  tests?: ScriptTestResult[];
 }
 
 export interface ComparisonResult {

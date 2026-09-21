@@ -1,4 +1,4 @@
-import type { CibaAuthConfig, JwtFetchConfig, JwtSignConfig } from '../types';
+import type { AuthConfig, CibaAuthConfig, Environment, EnvironmentVariable, JwtAuthConfig, JwtFetchConfig, JwtSignConfig } from '../types';
 
 const base64UrlEncode = (input: string | ArrayBuffer): string => {
   const bytes = typeof input === 'string' ? new TextEncoder().encode(input) : new Uint8Array(input);
@@ -146,3 +146,100 @@ export async function fetchCibaToken(
   }
   throw new Error('CIBA request timed out waiting for user approval');
 }
+
+const substitute = (text: string, variables: EnvironmentVariable[]): string => {
+  let result = text;
+  for (const variable of variables) {
+    if (variable.enabled) {
+      result = result.replace(new RegExp(`\\{\\{${variable.key}\\}\\}`, 'g'), variable.value);
+    }
+  }
+  return result;
+};
+
+const substituteAuthFields = (config: AuthConfig, variables: EnvironmentVariable[]): AuthConfig => {
+  const sub = (value?: string) => (value ? substitute(value, variables) : value);
+  const next: AuthConfig = { ...config, token: sub(config.token), username: sub(config.username), password: sub(config.password) };
+  if (config.jwt) {
+    next.jwt = {
+      ...config.jwt,
+      fetch: { ...config.jwt.fetch } as JwtFetchConfig,
+      sign: { ...config.jwt.sign, secret: sub(config.jwt.sign.secret) || '' } as JwtSignConfig,
+    };
+    (Object.keys(next.jwt.fetch) as Array<keyof JwtFetchConfig>).forEach(key => {
+      const value = next.jwt!.fetch[key];
+      if (typeof value === 'string') next.jwt!.fetch[key] = substitute(value, variables) as never;
+    });
+    next.jwt.sign.header = substitute(next.jwt.sign.header, variables);
+    next.jwt.sign.payload = substitute(next.jwt.sign.payload, variables);
+  }
+  if (config.ciba) {
+    next.ciba = { ...config.ciba };
+    (['authEndpoint', 'tokenEndpoint', 'clientId', 'clientSecret', 'scope', 'loginHint', 'bindingMessage'] as const).forEach(key => {
+      next.ciba![key] = substitute(config.ciba![key], variables);
+    });
+  }
+  return next;
+};
+
+/** Resolve the effective auth config for a request against an environment ('inherit' pulls from env). */
+export function resolveAuthConfig(requestAuth: AuthConfig | undefined, env: Environment | null): AuthConfig | undefined {
+  if (!requestAuth || requestAuth.type === 'none') return requestAuth;
+  if (requestAuth.type === 'inherit') return env?.auth;
+  return requestAuth;
+}
+
+/**
+ * Resolve + substitute auth, and ensure a valid token for jwt/ciba types
+ * (refreshing when missing or expired). Returns the effective config with a
+ * fresh token set, or null when nothing needs to change.
+ */
+export async function ensureFreshAuth(
+  requestAuth: AuthConfig | undefined,
+  env: Environment | null,
+  onStatus?: (message: string) => void,
+): Promise<AuthConfig | undefined> {
+  const resolved = resolveAuthConfig(requestAuth, env);
+  if (!resolved || resolved.type === 'none' || resolved.type === 'inherit') return resolved;
+  const config = substituteAuthFields(resolved, env?.variables || []);
+  if (config.type === 'bearer' || config.type === 'basic') return config;
+  const stillValid = config.token && config.tokenExpiresAt && Date.now() < config.tokenExpiresAt - 5000;
+  if (stillValid) return config;
+  if (config.type === 'jwt' && config.jwt) {
+    if (config.jwt.mode === 'sign') {
+      const token = await signJwt(config.jwt.sign);
+      const expiresAt = config.jwt.sign.expiresInSec > 0 ? Date.now() + config.jwt.sign.expiresInSec * 1000 : undefined;
+      return { ...config, token, tokenExpiresAt: expiresAt };
+    }
+    const result = await fetchOAuthToken(config.jwt.fetch);
+    return { ...config, token: result.token, tokenExpiresAt: result.expiresAt };
+  }
+  if (config.type === 'ciba' && config.ciba) {
+    const result = await fetchCibaToken(config.ciba, onStatus);
+    return { ...config, token: result.token, tokenExpiresAt: result.expiresAt };
+  }
+  return config;
+}
+
+/** Build the Authorization header value for an auth config, if any. */
+export function authorizationHeader(config: AuthConfig | undefined): string | null {
+  if (!config) return null;
+  if ((config.type === 'bearer' || config.type === 'jwt' || config.type === 'ciba') && config.token) {
+    return `Bearer ${config.token}`;
+  }
+  if (config.type === 'basic' && (config.username || config.password)) {
+    return `Basic ${btoa(`${config.username || ''}:${config.password || ''}`)}`;
+  }
+  return null;
+}
+
+export const defaultJwtConfig = (): JwtAuthConfig => ({
+  mode: 'fetch',
+  fetch: { tokenUrl: '', grantType: 'client_credentials', clientId: '', clientSecret: '', scope: '', username: '', password: '' },
+  sign: { alg: 'HS256', secret: '', header: '', payload: '', expiresInSec: 3600 },
+});
+
+export const defaultCibaConfig = (): CibaAuthConfig => ({
+  authEndpoint: '', tokenEndpoint: '', clientId: '', clientSecret: '', scope: 'openid',
+  loginHint: '', bindingMessage: '', pollIntervalSec: 5, expiresInSec: 120,
+});
