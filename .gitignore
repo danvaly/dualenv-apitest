@@ -27,3 +27,4 @@ release/**/*
 # Claude Code
 .claude/
 .vite/
+/.impeccable/
